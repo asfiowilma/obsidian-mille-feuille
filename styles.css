@@ -1,0 +1,106 @@
+/* mille-feuille — plugin UI. Colors bound to Obsidian theme vars; light+dark. §V18.
+   Ported from .scratch/mille-feuille/mille-feuille-ui-composite.html (v2). */
+
+.theme-dark, .theme-light {
+  --mf-chip: #E8B64C;
+  --mf-claimed: #4c9a6a;
+  --mf-stale: #d9843b;
+  --mf-error: #e0625c;
+  --mf-mono: "SFMono-Regular", ui-monospace, "Cascadia Mono", "Consolas", monospace;
+}
+.theme-light {
+  --mf-chip: #9a6a00;
+  --mf-claimed: #2f7d54;
+  --mf-stale: #b8621d;
+  --mf-error: #c4362f;
+}
+
+.mf-root { padding: 12px; font-size: 13px; }
+.mf-root .tnum, .mf-price, .mf-amt, .mf-mono-mut { font-family: var(--mf-mono); font-variant-numeric: tabular-nums; }
+
+/* wallet */
+.mf-wallet {
+  display: flex; align-items: center; gap: 11px; padding: 13px 14px; border-radius: 10px;
+  background: var(--background-secondary); border: 1px solid var(--background-modifier-border);
+}
+.mf-wallet.empty .mf-amt { color: var(--text-muted); }
+.mf-coin { font-size: 26px; line-height: 1; }
+.mf-grow { display: flex; flex-direction: column; }
+.mf-amt { font-weight: 700; font-size: 26px; color: var(--mf-chip); line-height: 1; }
+.mf-cap { font-size: 11px; color: var(--text-muted); margin-top: 3px; }
+
+/* section header */
+.mf-sec { display: flex; align-items: center; justify-content: space-between; margin: 18px 2px 8px; }
+.mf-sec-h { font-size: 10.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--text-muted); }
+.mf-pill { font-size: 10px; font-weight: 700; font-family: var(--mf-mono); padding: 1px 7px; border-radius: 999px; background: rgba(217,132,59,.16); color: var(--mf-stale); }
+.mf-lnk { font-size: 11px; color: var(--interactive-accent); cursor: pointer; font-weight: 600; background: none; border: none; font-family: inherit; box-shadow: none; padding: 0; }
+
+/* cards — neutral borders; state = badge */
+.mf-card { border: 1px solid var(--background-modifier-border); border-radius: 9px; padding: 9px 11px; background: var(--background-secondary); margin-bottom: 6px; display: flex; flex-direction: column; gap: 6px; }
+.mf-top { display: flex; align-items: flex-start; gap: 8px; }
+.mf-name { font-size: 13px; font-weight: 600; flex: 1; line-height: 1.25; }
+.mf-price { font-weight: 700; font-size: 13px; color: var(--mf-chip); white-space: nowrap; }
+.mf-price .u { font-size: 9.5px; color: var(--text-muted); font-weight: 500; margin-left: 2px; }
+.mf-counts { font-size: 10.5px; color: var(--text-muted); }
+.mf-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.mf-foot-right { display: flex; gap: 10px; align-items: center; }
+.mf-card.claim { opacity: .6; }
+
+.mf-bar-prog { height: 5px; border-radius: 3px; background: var(--background-modifier-border); overflow: hidden; }
+.mf-bar-prog > i { display: block; height: 100%; background: var(--mf-chip); opacity: .8; border-radius: 3px; transition: width .3s; }
+
+/* badges */
+.mf-badge { font-size: 10px; font-weight: 700; letter-spacing: .02em; padding: 2px 8px; border-radius: 999px; display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.mf-badge.exp { background: var(--background-modifier-border); color: var(--text-muted); }
+.mf-badge.avail { background: rgba(232,182,76,.16); color: var(--mf-chip); }
+.mf-badge.purch { background: rgba(var(--interactive-accent-rgb),.16); color: var(--interactive-accent); }
+.mf-badge.claim { background: rgba(76,154,106,.16); color: var(--mf-claimed); }
+.mf-badge.sold { background: transparent; color: var(--text-muted); border: 1px dashed var(--background-modifier-border); }
+
+.mf-stale-flag { font-size: 10.5px; color: var(--mf-stale); font-weight: 600; }
+.mf-itemlink { font-size: 10.5px; color: var(--interactive-accent); text-decoration: none; font-weight: 600; }
+.mf-itemlink:hover { text-decoration: underline; }
+.mf-mono-mut { color: var(--text-muted); font-size: 10.5px; }
+
+/* buttons — min 40px tap targets on mobile via padding */
+.mf-btn { font: inherit; font-size: 11.5px; font-weight: 700; cursor: pointer; border-radius: 7px; padding: 6px 12px; border: none; }
+.mf-btn:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: 2px; }
+.mf-btn.btn-buy, .mf-btn.btn-primary { background: var(--mf-chip); color: #1a1300; }
+.mf-btn.btn-claim { background: var(--interactive-accent); color: #fff; }
+.mf-btn.btn-ghost { background: transparent; color: var(--text-muted); border: 1px solid var(--background-modifier-border); }
+.mf-btn:disabled { opacity: .4; cursor: not-allowed; }
+.is-mobile .mf-btn { padding: 11px 16px; }
+
+/* ledger */
+.mf-ledger-row { display: grid; grid-template-columns: 1fr auto; gap: 3px 8px; padding: 8px 4px; border-bottom: 1px solid var(--background-modifier-border); align-items: center; }
+.mf-ln { font-size: 12px; font-weight: 600; }
+.mf-lc { grid-column: 1 / -1; font-size: 10.5px; color: var(--text-muted); }
+.mf-lc.st { color: var(--mf-stale); font-weight: 600; }
+.mf-empty-q { font-size: 11.5px; color: var(--text-muted); text-align: center; padding: 14px 8px; border: 1px dashed var(--background-modifier-border); border-radius: 9px; }
+
+/* add screen */
+.mf-add-head { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
+.mf-back { font-size: 12.5px; font-weight: 600; color: var(--text-muted); cursor: pointer; background: none; border: none; padding: 0; box-shadow: none; }
+.mf-back:hover { color: var(--text-normal); }
+.mf-add-ttl { margin-left: auto; font-size: 12.5px; font-weight: 600; color: var(--text-muted); }
+.mf-field { margin-bottom: 14px; }
+.mf-field > label { display: block; font-size: 12px; font-weight: 600; margin-bottom: 5px; }
+.mf-field input { width: 100%; font: inherit; font-size: 13px; padding: 8px 10px; border-radius: 7px; background: var(--background-modifier-form-field); color: var(--text-normal); border: 1px solid var(--background-modifier-border); }
+.mf-field input:focus { border-color: var(--interactive-accent); box-shadow: 0 0 0 2px rgba(var(--interactive-accent-rgb),.22); }
+.mf-field-err { font-size: 10.5px; color: var(--mf-error); margin-top: 5px; }
+.mf-affix { position: relative; }
+.mf-affix .mf-unit { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); font-size: 11px; color: var(--text-muted); font-weight: 600; pointer-events: none; }
+.mf-affix input { padding-right: 46px; font-family: var(--mf-mono); }
+.mf-seg { display: flex; gap: 5px; }
+.mf-seg button { flex: 1; font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; padding: 7px 6px; border-radius: 7px; border: 1px solid var(--background-modifier-border); background: var(--background-secondary); color: var(--text-muted); }
+.mf-seg button.on { background: var(--mf-chip); color: #1a1300; border-color: transparent; }
+.mf-seg-n input { margin-top: 7px; width: 100%; font: inherit; font-size: 13px; padding: 8px 10px; border-radius: 7px; background: var(--background-modifier-form-field); color: var(--text-normal); border: 1px solid var(--background-modifier-border); font-family: var(--mf-mono); }
+.mf-tog { display: flex; align-items: center; justify-content: space-between; padding: 9px 0; }
+.mf-tog-lab { font-size: 12px; font-weight: 600; }
+.mf-tog-lab small { display: block; font-size: 10.5px; color: var(--text-muted); font-weight: 500; }
+.mf-switch { width: 38px; height: 22px; border-radius: 999px; background: var(--background-modifier-border); position: relative; cursor: pointer; flex: none; transition: .18s; border: none; }
+.mf-switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: .18s; }
+.mf-switch.on { background: var(--interactive-accent); }
+.mf-switch.on::after { left: 18px; }
+.mf-form-foot { display: flex; gap: 8px; margin-top: 8px; }
+.mf-form-foot .btn-primary { flex: 1; }
