@@ -112,27 +112,29 @@ export class MilleFeuilleView extends ItemView {
   }
 
   private queueCard(root: HTMLElement, r: Reward, staleAfter: number): void {
-    const card = root.createDiv({ cls: "mf-card" });
-    const top = card.createDiv({ cls: "mf-top" });
-    thumbEl(top, r);
+    const card = root.createDiv({ cls: "mf-card" + (r.thumbnail ? " has-thumb" : "") });
+    thumbEl(card, r);
+    const body = card.createDiv({ cls: "mf-card-body" });
+    const top = body.createDiv({ cls: "mf-top" });
     const main = top.createDiv({ cls: "mf-top-main" });
     main.createSpan({ cls: "mf-name", text: r.name });
     priceEl(main, r.price);
     this.cardActions(top, r);
     const age = oldestOpenAgeDays(r, today());
     if (isStale(r, today(), staleAfter) && age !== null) {
-      card.createDiv({ cls: "mf-stale-flag", text: `⚠ Bought ${age} days ago. Claim it before you forget.` });
+      body.createDiv({ cls: "mf-stale-flag", text: `⚠ Bought ${age} days ago. Claim it before you forget.` });
     }
-    const foot = card.createDiv({ cls: "mf-foot" });
+    const foot = body.createDiv({ cls: "mf-foot" });
     foot.createSpan({ cls: "mf-badge purch", text: `● ${openCount(r)} open` });
     const btn = foot.createEl("button", { cls: "mf-btn btn-claim", text: openCount(r) > 1 ? "Claim oldest" : "Claim" });
     btn.onclick = () => this.plugin.claim(r);
   }
 
   private shopCard(root: HTMLElement, r: Reward, bal: number): void {
-    const card = root.createDiv({ cls: "mf-card" });
-    const top = card.createDiv({ cls: "mf-top" });
-    thumbEl(top, r);
+    const card = root.createDiv({ cls: "mf-card" + (r.thumbnail ? " has-thumb" : "") });
+    thumbEl(card, r);
+    const body = card.createDiv({ cls: "mf-card-body" });
+    const top = body.createDiv({ cls: "mf-top" });
     const main = top.createDiv({ cls: "mf-top-main" });
     main.createSpan({ cls: "mf-name", text: r.name });
     priceEl(main, r.price);
@@ -147,8 +149,8 @@ export class MilleFeuilleView extends ItemView {
     };
 
     if (canBuy(r, bal)) {
-      card.createDiv({ cls: "mf-counts", text: countsLine(r) });
-      const foot = card.createDiv({ cls: "mf-foot" });
+      body.createDiv({ cls: "mf-counts", text: countsLine(r) });
+      const foot = body.createDiv({ cls: "mf-foot" });
       foot.createSpan({ cls: "mf-badge avail", text: "✓ Available" });
       const right = foot.createDiv({ cls: "mf-foot-right" });
       link(right);
@@ -157,9 +159,9 @@ export class MilleFeuilleView extends ItemView {
       buy.onclick = () => this.plugin.buy(r);
     } else {
       const pct = Math.min(100, Math.round((bal / r.price) * 100));
-      const bar = card.createDiv({ cls: "mf-bar-prog" });
+      const bar = body.createDiv({ cls: "mf-bar-prog" });
       bar.createEl("i").style.width = pct + "%";
-      const foot = card.createDiv({ cls: "mf-foot" });
+      const foot = body.createDiv({ cls: "mf-foot" });
       foot.createSpan({ cls: "mf-badge exp", text: "Too expensive" });
       const right = foot.createDiv({ cls: "mf-foot-right" });
       link(right);

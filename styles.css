@@ -78,8 +78,11 @@
 .is-mobile .mf-btn { padding: 11px 16px; }
 
 /* thumbnail + card action buttons */
+.mf-card-body { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.mf-card.has-thumb { flex-direction: row; align-items: stretch; gap: 0; padding: 0; overflow: hidden; }
+.mf-card.has-thumb .mf-card-body { flex: 1; padding: 9px 11px; }
+.mf-thumb { align-self: stretch; width: 72px; object-fit: cover; flex: none; background: var(--background-modifier-border); border-right: 1px solid var(--background-modifier-border); }
 .mf-top-main { display: flex; align-items: flex-start; gap: 8px; flex: 1; min-width: 0; }
-.mf-thumb { width: 44px; height: 44px; border-radius: 12px; object-fit: cover; flex: none; background: var(--background-modifier-border); border: 1px solid var(--background-modifier-border); }
 .mf-card-acts { display: flex; gap: 4px; flex: none; }
 .mf-icon-btn { font: inherit; font-size: 12px; line-height: 1; cursor: pointer; padding: 4px 6px; border-radius: var(--button-radius, 6px); background: transparent; color: var(--text-muted); border: 1px solid transparent; box-shadow: none; }
 .mf-icon-btn:hover { background: var(--interactive-hover); color: var(--text-normal); border-color: var(--background-modifier-border); }
