@@ -13,6 +13,7 @@ export interface Reward {
   state: RewardState; // DERIVED, persisted top-level for Dataview
   isPurchasable?: true; // §V25 written only when true
   purchaseUrl?: string;
+  thumbnail?: string; // optional image URL shown on cards
 }
 
 export function openCount(r: Reward): number {

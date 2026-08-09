@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf } from "obsidian";
+import { ItemView, WorkspaceLeaf, Modal, App } from "obsidian";
 import type MilleFeuillePlugin from "./main.js";
 import type { Reward } from "./rewards.js";
 import {
@@ -21,19 +21,30 @@ interface FormState {
   n: string;
   isPurchasable: boolean;
   url: string;
+  thumb: string;
 }
-const blankForm = (): FormState => ({ name: "", price: "", servingsMode: "one", n: "2", isPurchasable: false, url: "" });
+const blankForm = (): FormState => ({ name: "", price: "", servingsMode: "one", n: "2", isPurchasable: false, url: "", thumb: "" });
+const formFrom = (r: Reward): FormState => ({
+  name: r.name,
+  price: String(r.price),
+  servingsMode: r.servings === -1 ? "inf" : r.servings === 1 ? "one" : "n",
+  n: r.servings > 1 ? String(r.servings) : "2",
+  isPurchasable: !!r.isPurchasable,
+  url: r.purchaseUrl ?? "",
+  thumb: r.thumbnail ?? "",
+});
 
 export class MilleFeuilleView extends ItemView {
   private screen: Screen = "home";
   private form = blankForm();
+  private editing: Reward | null = null;
 
   constructor(leaf: WorkspaceLeaf, private plugin: MilleFeuillePlugin) {
     super(leaf);
   }
 
   getViewType(): string { return MILLE_VIEW; }
-  getDisplayText(): string { return "mille-feuille"; }
+  getDisplayText(): string { return "Mille-Feuille"; }
   getIcon(): string { return "cookie"; }
 
   async onOpen(): Promise<void> { this.render(); }
@@ -77,7 +88,7 @@ export class MilleFeuilleView extends ItemView {
     // shop
     const shopSec = this.section(root, "Shop", null);
     const addBtn = shopSec.createEl("button", { cls: "mf-lnk", text: "+ New reward" });
-    addBtn.onclick = () => { this.screen = "add"; this.form = blankForm(); this.render(); };
+    addBtn.onclick = () => { this.editing = null; this.screen = "add"; this.form = blankForm(); this.render(); };
     if (!shop.length) {
       root.createDiv({ cls: "mf-empty-q", text: "No rewards yet. Add one to start saving." });
     } else {
@@ -103,8 +114,11 @@ export class MilleFeuilleView extends ItemView {
   private queueCard(root: HTMLElement, r: Reward, staleAfter: number): void {
     const card = root.createDiv({ cls: "mf-card" });
     const top = card.createDiv({ cls: "mf-top" });
-    top.createSpan({ cls: "mf-name", text: r.name });
-    priceEl(top, r.price);
+    thumbEl(top, r);
+    const main = top.createDiv({ cls: "mf-top-main" });
+    main.createSpan({ cls: "mf-name", text: r.name });
+    priceEl(main, r.price);
+    this.cardActions(top, r);
     const age = oldestOpenAgeDays(r, today());
     if (isStale(r, today(), staleAfter) && age !== null) {
       card.createDiv({ cls: "mf-stale-flag", text: `⚠ Bought ${age} days ago. Claim it before you forget.` });
@@ -118,8 +132,11 @@ export class MilleFeuilleView extends ItemView {
   private shopCard(root: HTMLElement, r: Reward, bal: number): void {
     const card = root.createDiv({ cls: "mf-card" });
     const top = card.createDiv({ cls: "mf-top" });
-    top.createSpan({ cls: "mf-name", text: r.name });
-    priceEl(top, r.price);
+    thumbEl(top, r);
+    const main = top.createDiv({ cls: "mf-top-main" });
+    main.createSpan({ cls: "mf-name", text: r.name });
+    priceEl(main, r.price);
+    this.cardActions(top, r);
 
     const link = (parent: HTMLElement) => {
       if (r.purchaseUrl) {
@@ -150,6 +167,16 @@ export class MilleFeuilleView extends ItemView {
     }
   }
 
+  private cardActions(parent: HTMLElement, r: Reward): void {
+    const acts = parent.createDiv({ cls: "mf-card-acts" });
+    const edit = acts.createEl("button", { cls: "mf-icon-btn", text: "✎" });
+    edit.setAttr("aria-label", `Edit ${r.name}`);
+    edit.onclick = () => { this.editing = r; this.form = formFrom(r); this.screen = "add"; this.render(); };
+    const del = acts.createEl("button", { cls: "mf-icon-btn danger", text: "🗑" });
+    del.setAttr("aria-label", `Delete ${r.name}`);
+    del.onclick = () => new ConfirmModal(this.app, r.name, () => void this.plugin.removeReward(r)).open();
+  }
+
   private ledgerRow(root: HTMLElement, r: Reward, staleAfter: number): void {
     const row = root.createDiv({ cls: "mf-ledger-row" });
     row.createSpan({ cls: "mf-ln", text: r.name });
@@ -165,13 +192,14 @@ export class MilleFeuilleView extends ItemView {
   private renderAdd(root: HTMLElement): void {
     const head = root.createDiv({ cls: "mf-add-head" });
     const back = head.createEl("button", { cls: "mf-back", text: "‹ Back" });
-    back.onclick = () => { this.screen = "home"; this.render(); };
-    head.createSpan({ cls: "mf-add-ttl", text: "New reward" });
+    back.onclick = () => { this.editing = null; this.screen = "home"; this.render(); };
+    head.createSpan({ cls: "mf-add-ttl", text: this.editing ? "Edit reward" : "New reward" });
 
     const f = this.form;
+    const editingSlug = this.editing ? slug(this.editing.name) : null;
     const dupName = (): boolean => {
       const s = slug(f.name);
-      return !!s && this.plugin.rewards.some((r) => slug(r.name) === s);
+      return !!s && this.plugin.rewards.some((r) => slug(r.name) === s && slug(r.name) !== editingSlug);
     };
 
     // name
@@ -231,18 +259,25 @@ export class MilleFeuilleView extends ItemView {
     sw.onclick = () => { f.isPurchasable = !f.isPurchasable; sw.toggleClass("on", f.isPurchasable); renderUrl(); update(); };
     renderUrl();
 
+    // thumbnail (optional)
+    const thumbField = field(root, "Thumbnail image URL (optional)");
+    const thumbInput = thumbField.createEl("input", { attr: { type: "url", placeholder: "https://…/image.png" } });
+    thumbInput.value = f.thumb;
+    thumbInput.oninput = () => { f.thumb = thumbInput.value; update(); };
+
     // footer
     const foot = root.createDiv({ cls: "mf-form-foot" });
     const cancel = foot.createEl("button", { cls: "mf-btn btn-ghost", text: "Cancel" });
-    cancel.onclick = () => { this.screen = "home"; this.render(); };
-    const create = foot.createEl("button", { cls: "mf-btn btn-primary", text: "Create reward" });
+    cancel.onclick = () => { this.editing = null; this.screen = "home"; this.render(); };
+    const create = foot.createEl("button", { cls: "mf-btn btn-primary", text: this.editing ? "Save changes" : "Create reward" });
 
     const valid = (): boolean => {
       const name = f.name.trim();
       const price = parseInt(f.price || "0", 10);
       const nOk = f.servingsMode !== "n" || parseInt(f.n || "0", 10) >= 2;
       const urlOk = !f.isPurchasable || /^https?:\/\/.+/.test(f.url.trim());
-      return name.length > 0 && !dupName() && price >= 1 && nOk && urlOk;
+      const thumbOk = !f.thumb.trim() || /^https?:\/\/.+/.test(f.thumb.trim());
+      return name.length > 0 && !dupName() && price >= 1 && nOk && urlOk && thumbOk;
     };
     const update = () => { create.disabled = !valid(); };
     update();
@@ -250,12 +285,20 @@ export class MilleFeuilleView extends ItemView {
     create.onclick = async () => {
       if (!valid()) return;
       const servings = f.servingsMode === "one" ? 1 : f.servingsMode === "inf" ? -1 : parseInt(f.n, 10);
+      const prev = this.editing;
       const r: Reward = {
         type: "reward", name: f.name.trim(), price: parseInt(f.price, 10), servings,
-        purchasedCount: 0, claimedCount: 0, openPurchaseDates: [], state: "available",
+        // preserve counts/history when editing
+        purchasedCount: prev?.purchasedCount ?? 0,
+        claimedCount: prev?.claimedCount ?? 0,
+        openPurchaseDates: prev?.openPurchaseDates ?? [],
+        state: "available",
       };
       if (f.isPurchasable) { r.isPurchasable = true; if (f.url.trim()) r.purchaseUrl = f.url.trim(); }
-      await this.plugin.addReward(r);
+      if (f.thumb.trim()) r.thumbnail = f.thumb.trim();
+      if (prev) await this.plugin.updateReward(prev.name, r);
+      else await this.plugin.addReward(r);
+      this.editing = null;
       this.screen = "home";
       this.render();
     };
@@ -270,4 +313,26 @@ function field(root: HTMLElement, label: string): HTMLElement {
 function priceEl(parent: HTMLElement, price: number): void {
   const el = parent.createSpan({ cls: "mf-price", text: fmt(price) });
   el.createSpan({ cls: "u", text: " chips" });
+}
+function thumbEl(parent: HTMLElement, r: Reward): void {
+  if (!r.thumbnail) return; // hide if empty
+  const img = parent.createEl("img", { cls: "mf-thumb", attr: { src: r.thumbnail, alt: "", loading: "lazy" } });
+  img.onerror = () => img.remove(); // drop broken image, keep layout clean
+}
+
+// Delete-confirm dialog — no quick delete; destructive action uses mod-warning.
+class ConfirmModal extends Modal {
+  constructor(app: App, private name: string, private onConfirm: () => void) {
+    super(app);
+  }
+  onOpen(): void {
+    this.titleEl.setText("Delete reward");
+    this.contentEl.createEl("p", { text: `Delete “${this.name}”? This removes it from the shop and can't be undone.` });
+    const row = this.contentEl.createDiv({ cls: "mf-form-foot" });
+    const cancel = row.createEl("button", { cls: "mf-btn btn-ghost", text: "Cancel" });
+    cancel.onclick = () => this.close();
+    const del = row.createEl("button", { cls: "mf-btn mod-warning", text: "Delete" });
+    del.onclick = () => { this.close(); this.onConfirm(); };
+  }
+  onClose(): void { this.contentEl.empty(); }
 }

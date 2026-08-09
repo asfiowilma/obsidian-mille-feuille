@@ -14,7 +14,7 @@ import {
   type CreditEntry,
 } from "./ledger.js";
 import type { Reward } from "./rewards.js";
-import { isSoldOut, purchase, claim as claimReward } from "./rewards.js";
+import { isSoldOut, purchase, claim as claimReward, slug } from "./rewards.js";
 import { parseLine, habitKey, taskKey, decideAction, inScanScope } from "./scan.js";
 import { CritStreak, AffordabilityTracker } from "./toasts.js";
 import { renderMsg, renderClaim, critStreakCopy } from "./messages.js";
@@ -41,7 +41,7 @@ export default class MilleFeuillePlugin extends Plugin {
     this.addSettingTab(new MilleFeuilleSettingTab(this.app, this));
 
     this.registerView(MILLE_VIEW, (leaf) => new MilleFeuilleView(leaf, this));
-    this.addRibbonIcon("cookie", "Open mille-feuille", () => this.activateView());
+    this.addRibbonIcon("cookie", "Open Mille-Feuille", () => this.activateView());
     this.addCommand({ id: "open-mille-feuille", name: "Open panel", callback: () => this.activateView() });
     this.addCommand({ id: "roll-monthly", name: "Roll monthly review", callback: () => this.rollMonthly() });
 
@@ -190,6 +190,16 @@ export default class MilleFeuillePlugin extends Plugin {
     this.rewards.push(r);
     this.afford.check(this.rewards, this.balance());
     notify(renderMsg(this.settings.messages, "added", { name: r.name, price: r.price }));
+    this.refreshViews();
+  }
+
+  /** Edit an existing reward in place. If the name (slug) changed, drop the old file. */
+  async updateReward(oldName: string, r: Reward): Promise<void> {
+    if (slug(oldName) !== slug(r.name)) await this.store.deleteReward(oldName);
+    await this.store.writeReward(r);
+    const i = this.rewards.findIndex((x) => x.name === oldName);
+    if (i >= 0) this.rewards[i] = r; else this.rewards.push(r);
+    this.afford.check(this.rewards, this.balance());
     this.refreshViews();
   }
 

@@ -121,6 +121,7 @@ function rewardNote(r: Reward): string {
     fm.isPurchasable = true; // §V25 only when true
     if (r.purchaseUrl) fm.purchaseUrl = r.purchaseUrl;
   }
+  if (r.thumbnail) fm.thumbnail = r.thumbnail;
   return `---\n${stringifyYaml(fm)}---\n`;
 }
 
@@ -139,6 +140,7 @@ function normalizeReward(fm: Record<string, unknown>): Reward {
     r.isPurchasable = true;
     if (typeof fm.purchaseUrl === "string") r.purchaseUrl = fm.purchaseUrl;
   }
+  if (typeof fm.thumbnail === "string") r.thumbnail = fm.thumbnail;
   r.state = deriveState(r);
   return r;
 }
