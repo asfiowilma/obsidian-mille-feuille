@@ -44,7 +44,7 @@ export class MilleFeuilleView extends ItemView {
   }
 
   getViewType(): string { return MILLE_VIEW; }
-  getDisplayText(): string { return "Mille-Feuille"; }
+  getDisplayText(): string { return "mille-feuille"; }
   getIcon(): string { return "cookie"; }
 
   async onOpen(): Promise<void> { this.render(); }

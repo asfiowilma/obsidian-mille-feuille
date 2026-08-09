@@ -41,7 +41,7 @@ export default class MilleFeuillePlugin extends Plugin {
     this.addSettingTab(new MilleFeuilleSettingTab(this.app, this));
 
     this.registerView(MILLE_VIEW, (leaf) => new MilleFeuilleView(leaf, this));
-    this.addRibbonIcon("cookie", "Open Mille-Feuille", () => this.activateView());
+    this.addRibbonIcon("cookie", "Open mille-feuille", () => this.activateView());
     this.addCommand({ id: "open-mille-feuille", name: "Open panel", callback: () => this.activateView() });
     this.addCommand({ id: "roll-monthly", name: "Roll monthly review", callback: () => this.rollMonthly() });
 
