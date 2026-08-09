@@ -37,7 +37,6 @@ export class MilleFeuilleSettingTab extends PluginSettingTab {
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
-    new Setting(containerEl).setName("Mille Feuille").setHeading();
     const e = this.plugin.settings.economy;
     const save = () => this.plugin.saveSettings();
 
