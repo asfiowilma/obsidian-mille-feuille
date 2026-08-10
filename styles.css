@@ -136,3 +136,57 @@
 .mf-switch.on::after { left: 18px; }
 .mf-form-foot { display: flex; gap: 8px; margin-top: 8px; }
 .mf-form-foot .btn-primary { flex: 1; }
+
+/* ---- reward metadata: emoji tile + description clamp (§V54,§V55) ---- */
+.mf-thumb-emoji { align-self: stretch; width: 72px; flex: none; display: flex; align-items: center; justify-content: center; font-size: 30px; background: var(--background-modifier-border); border-right: 1px solid var(--background-modifier-border); }
+.mf-desc { font-size: 11px; color: var(--text-muted); line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.mf-field textarea { width: 100%; font: inherit; font-size: 13px; padding: 8px 10px; border-radius: 7px; background: var(--background-modifier-form-field); color: var(--text-normal); border: 1px solid var(--background-modifier-border); resize: vertical; }
+.mf-field textarea:focus { border-color: var(--interactive-accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--interactive-accent) 22%, transparent); }
+
+/* ---- gacha section (§V42,§V43) ---- */
+.mf-gacha-rolls { font-size: 11px; font-weight: 600; font-family: var(--mf-mono); color: var(--text-muted); }
+.mf-gacha-rolls.low { color: var(--mf-error); }
+.mf-gacha { border: 1px solid var(--background-modifier-border); border-radius: 10px; background: var(--background-secondary); padding: 14px; position: relative; overflow: hidden; }
+.mf-gacha-stage { min-height: 104px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 6px; padding: 6px 4px; }
+.mf-g-big { font-size: 34px; line-height: 1; }
+.mf-g-msg { font-size: 14px; font-weight: 600; }
+.mf-g-sub { font-size: 11px; color: var(--text-muted); }
+.mf-g-dim { font-size: 10.5px; color: var(--text-muted); }
+.mf-gacha-stage.pre .mf-g-big { opacity: .35; filter: grayscale(1); }
+.mf-gacha-stage.pre .mf-g-msg { color: var(--text-muted); font-weight: 500; }
+.mf-gacha-stage.win .mf-g-msg { color: var(--mf-chip); }
+.mf-roll-btn { width: 100%; margin-top: 10px; min-height: 44px; border: none; border-radius: 9px; cursor: pointer; background: var(--interactive-accent); color: var(--text-on-accent, #fff); font: inherit; font-size: 14px; font-weight: 700; }
+.mf-roll-btn:hover:not(:disabled) { filter: brightness(1.08); }
+.mf-roll-btn:disabled { background: var(--background-modifier-border); color: var(--text-muted); cursor: not-allowed; }
+.mf-gacha-hint { font-size: 10.5px; color: var(--text-muted); text-align: center; margin-top: 6px; min-height: 14px; }
+.mf-gacha-hint.err { color: var(--mf-error); }
+.mf-gacha-div { height: 1px; background: var(--background-modifier-border); margin: 14px 2px 4px; }
+
+/* jackpot overlay — short, non-blocking, no decision (§V45) */
+.mf-jackpot { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; text-align: center; padding: 20px; cursor: pointer; z-index: 5; background: radial-gradient(circle at 50% 40%, color-mix(in srgb, var(--mf-chip) 22%, transparent), color-mix(in srgb, var(--background-primary) 92%, transparent)); }
+.mf-jp-big { font-size: 48px; line-height: 1; }
+.mf-jp-h { font-size: 22px; font-weight: 800; color: var(--mf-chip); }
+.mf-jp-sub { font-size: 12px; color: var(--text-normal); }
+
+/* free-reward picker (§V51) */
+.mf-won { font-size: 12px; font-weight: 600; color: var(--mf-chip); padding: 11px 13px; border-radius: 10px; margin-bottom: 12px; background: color-mix(in srgb, var(--mf-chip) 14%, var(--background-secondary)); border: 1px solid color-mix(in srgb, var(--mf-chip) 40%, var(--background-modifier-border)); }
+.mf-pick-card { cursor: pointer; }
+.mf-pick-card:hover { border-color: color-mix(in srgb, var(--mf-chip) 55%, var(--background-modifier-border)); }
+.mf-pick-card:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: 2px; }
+
+/* motion only when the user allows it (§V47) */
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes mf-shake { 10%,90%{transform:translateX(-2px)} 20%,80%{transform:translateX(3px)} 30%,50%,70%{transform:translateX(-5px)} 40%,60%{transform:translateX(5px)} }
+  @keyframes mf-pop { 0%{transform:scale(.3);opacity:0} 70%{transform:scale(1.15)} 100%{transform:scale(1);opacity:1} }
+  @keyframes mf-bounce { 0%{transform:translateY(0)} 30%{transform:translateY(-14px)} 55%{transform:translateY(0)} 72%{transform:translateY(-6px)} 100%{transform:translateY(0)} }
+  @keyframes mf-fadein { from{opacity:0} to{opacity:1} }
+  @keyframes mf-wobble { 0%{transform:rotate(0)} 25%{transform:rotate(-8deg)} 50%{transform:rotate(6deg)} 75%{transform:rotate(-4deg)} 100%{transform:rotate(0)} }
+  @keyframes mf-pulse { 0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--mf-chip) 60%,transparent)} 100%{box-shadow:0 0 0 8px transparent} }
+  .mf-shaking { animation: mf-shake .3s cubic-bezier(.36,.07,.19,.97) both; }
+  .mf-gacha-stage.mf-anim-pop .mf-g-big { animation: mf-pop .45s cubic-bezier(.2,1.3,.4,1) both; }
+  .mf-gacha-stage.mf-anim-bounce .mf-g-big { animation: mf-bounce .6s ease both; }
+  .mf-gacha-stage.mf-anim-fade { animation: mf-fadein .35s ease both; }
+  .mf-gacha-stage.mf-anim-wobble .mf-g-big { animation: mf-wobble .5s ease both; }
+  .mf-jp-big.mf-anim-pop { animation: mf-pop .45s cubic-bezier(.2,1.3,.4,1) both; }
+  .mf-pick-card.mf-pulse { animation: mf-pulse .15s ease; }
+}

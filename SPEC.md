@@ -67,14 +67,68 @@ purchaseUrl: https://…  # OPTIONAL — only when isPurchasable: true (V25)
 - **ledger** entries (source of truth for balance & aggregates):
   - credit: `{date, source, key, base, crit, chips, tier}` — source ∈ {task,subtask,milestone,habit}; key=`(id,✅date)` for habits; tier=milestone tag|habit tier.
   - reversal: `{date, reversalOf: key, chips: -N}`.
-  - spend: `{date, reward, price}`.
-  - claim: `{date, reward}` — no chip movement, feeds aggregates.
+  - spend: `{date, reward, price}` — see §I.gacha for signed `chips` + gacha fields (V35,V40).
+  - claim: `{date, reward}` — no chip movement, feeds aggregates. ⊥ `source` field (gacha proof on grant marker, not claim).
 - **mochi bridge**: line `- [x] <id> · <tier> ✅ <date>` under `## Tasks`. Read by §I scan, no API/event/marker.
 - **file layout** (base folder configurable in settings, default `mille-feuille`; filenames & structure fixed):
   - `<base>/wallet.md` — frontmatter `balance` (cached sum of ledger).
   - `<base>/ledger/<YYYY-MM>.md` — append-only entries, one file/month.
   - `<base>/aggregates.md` — permanent monthly aggregate record, 1 row/month.
   - `<base>/rewards/<name>.md` — one note/reward (§I reward note shape).
+
+### §I additions — gacha + reward metadata (v0.5, from design-spec shop-gacha)
+
+```yaml
+# config: top-level gacha key (⊥ inside economy — keeps gacha economy separate from earn)
+gacha:
+  enabled: false          # default off. off → hide all gacha UI + config
+  cost: 5                 # chips per roll
+  maxRollsPerDay: 5       # SPEC ADDITION (not in PRD). 0 = no limit
+  jackpotPopupMs: 3000    # free-reward celebration on-screen time
+  outcomes:               # weighted table. p = weight / sum(weights)
+    - { type: nothing,       weight: 50 }
+    - { type: rebate_small,  weight: 30, value: 2 }   # value = chips returned
+    - { type: rebate_big,    weight: 15, value: 8 }   # value may exceed cost (design B)
+    - { type: free_reward,   weight: 5 }
+```
+- `type` ∈ {`nothing`,`rebate_small`,`rebate_big`,`free_reward`}.
+- `value` present only on `rebate_small`|`rebate_big`. May exceed `cost`.
+- sum(weights)==0 | `outcomes` empty → subsystem behaves off.
+- ⊥ EV/house-edge check. 1 user, table = their knob.
+
+```ts
+export interface SpendEntry {
+  kind: "spend";
+  date: string;
+  reward?: string;              // absent on gacha ROLL; present on purchase + free-grant marker
+  price?: number;               // present on purchase + free-grant marker (0); absent on gacha roll
+  chips?: number;               // NEW. signed. purchase = -price. gacha roll = -cost + rebate.
+                                //   free-grant marker = absent (counts 0). pre-fix entry = absent (counts 0).
+  subtype?: "gacha";            // NEW. marks gacha spend (roll or free-grant marker)
+  outcome?: "nothing" | "rebate_small" | "rebate_big" | "free_reward"; // gacha only
+}
+export interface ClaimEntry {
+  kind: "claim";
+  date: string;
+  reward: string;
+  // ⊥ source field. Gacha proof on grant MARKER (spend), not on claim. Gacha claim = normal claim. Intended.
+}
+```
+- ∀ new `SpendEntry` field optional. Pre-fix entry `{reward,price}` reads unchanged, counts 0.
+
+```ts
+// monthly aggregate — new fields
+gachaRolls: number;    // count spend where subtype=="gacha" & reward absent
+gachaRebated: number;  // total chips rebate results returned this month
+gachaClaims: number;   // count spend where subtype=="gacha" & outcome=="free_reward" & reward present.
+                       //   = free rewards won. Separate from paid `claimed`.
+```
+
+```yaml
+# reward note — new optional fields (same omit-when-absent pattern as V25)
+desc: "Noise-cancelling, over-ear."   # OPTIONAL. ≤280 chars. top-level, for Dataview
+emoji: "🎧"                            # OPTIONAL. exactly one emoji grapheme
+```
 
 ## §V
 
@@ -83,8 +137,8 @@ V2: crit lives on payout magnitude only, ⊥ reward identity. Roll independent p
 V3: purchase|claim ⊥ credit chips (anti-loop). Only task/subtask/milestone/habit completion credits.
 V4: milestone tag → pay `defaultBase × multiplier` (+own crit) for that one tagged task. Pure per-task multiplier — ⊥ relation to subtask payouts, ⊥ parent/child bonus, ⊥ on-top.
 V5: task tagged `#x2`/`#x3`/`#x5` → milestone. Respected wherever tag sits, any hierarchy depth. Nesting ⊥ matter.
-V6: balance = sum `chips` over credit + reversal entries. Unchecked completion nets 0.
-V7: purchase allowed iff `purchasedCount < servings | servings == -1` → deduct price, `purchasedCount++`, append today→`openPurchaseDates`.
+V6 (changed): balance = sum `chips` over credit + reversal + **spend** entries. Spend counts `e.chips` when present, 0 when absent. Credit+reversal logic unchanged. Defect fix — old wording (balance excludes spend) retired; V7 now correct. Unchecked completion nets 0.
+V7 (changed): purchase allowed iff capacity (`purchasedCount < servings | servings == -1`) & `price ≤ balance()`. On buy → write spend `{reward, price, chips: -price}`, `purchasedCount++`, append today→`openPurchaseDates`. Refuse when `price > balance()`. Balance never < 0. Normal-purchase `chips` always ≤ 0.
 V8: claim FIFO → `claimedCount++`, pop `openPurchaseDates[0]`.
 V9: `state` derived top-level: `sold-out` when `servings≠-1 & purchasedCount≥servings & openPurchaseDates==[]`; `purchased` when `openPurchaseDates` non-empty; else `available`. Affordability = `balance ≥ price`, computed live, ⊥ persisted.
 V10: reward w/ open (purchased-not-claimed) occurrence → visible/queryable until claimed.
@@ -93,7 +147,7 @@ V12: habit classifier: line carries ` · <tier>`, tier ∈ {farm,ult} → `habit
 V13: habit payout frozen per key `(id,✅date)` on first `[x]`. Rewrite idempotent — no re-credit, no crit re-roll. `[-]` & `[ ]` credit nothing.
 V14: uncheck habit → reversal entry for exact recorded amount; re-check re-applies frozen amount (no crit re-roll).
 V15: every economy param ∈ config object, edited via Obsidian plugin settings tab (⊥ raw file edit needed). Change → live, no recompile.
-V16: monthly aggregates (chips by tier, purchased/claimed, open/stale count, crit count) produced FROM ledger, ⊥ from reward notes. Monthly pass rolls ledger → permanent aggregate; closed occurrences may then trim.
+V16 (changed): monthly aggregates (chips by tier, purchased/claimed, open/stale count, crit count) produced FROM ledger, ⊥ from reward notes. Monthly pass rolls ledger → permanent aggregate; closed occurrences may then trim. `aggregate()` ⊥ count gacha spend (`subtype=="gacha"`) in `purchased`. Adds `gachaRolls`,`gachaRebated`,`gachaClaims` (§I). Reversal/credit/claim counts unchanged.
 V17: rewards & wallet stored as vault notes/frontmatter (⊥ plugin-only `data.json`); derived fields top-level for naive Dataview read.
 V18: every view styled by default (bare-unstyled = defect). Palette bound to Obsidian CSS vars, light/dark fallback, ⊥ hardcoded dark-only. Correct dark+light, mobile+desktop, tap targets ≥ 40px.
 V19: reward card shows counts + remaining servings; `Purchased` (pending) ⊥ mistakable for `Claimed` (done) — distinct badge + tint.
@@ -125,6 +179,63 @@ V32: rescan command "Rescan vault for completed tasks" → walk ∀ in-scope md 
 V33: auto monthly roll on load — `onLayoutReady`, ∀ closed month (< current `YYYY-MM`) w/ ≥1 credit ledger entry & ⊥ existing aggregate row → roll it (V16), oldest-first. Current (open) month ⊥ rolled. ⊥ duplicate existing aggregate rows. Manual `roll-monthly` command stays. Monthly toast (V27) ⊥ fire on auto-roll (silent backfill).
 V34: panel shows current-month stats row, read FROM ledger (V16 `aggregate` over `today().slice(0,7)`), ⊥ from reward notes. Shows chips earned this month, claimed count, crit count. Recomputed live on `refreshViews`, ⊥ persisted apart from ledger. Empty month → zeros, row ⊥ hidden.
 
+### §V new — v0.5 shop-gacha (from design-spec)
+
+V35: signed spend + new-only migration. `SpendEntry.chips` signed. `balance()` adds it: `e.chips` when present else 0. ⊥ date gate, ⊥ data migration. Pre-fix spend no `chips` → counts 0, stays free. Only post-fix spend lowers balance.
+V36: no negative balance. ∀ chip-spending txn (purchase | gacha roll) checks balance first, refused when cost > balance. Balance never < 0.
+V37: master enable guard. Check `gacha.enabled` first — before ∀ gacha txn (roll|rebate|free grant) & before showing any gacha UI. Off → no gacha section, no gacha config fields, gacha txn does nothing. Also off when sum(weights)==0 | `outcomes` empty.
+V38: weighted roll. At roll, weights→probabilities `p = weight / sum(weights)`, select 1 result. `rebate_small`|`rebate_big` returns `value` chips, net = `-cost + value`. `nothing`|`free_reward` add 0.
+V39: daily limit (SPEC addition). Count today's rolls FROM ledger: spend where `subtype=="gacha"` & `reward` absent & `date`==today. ⊥ stored counter, resets on date change. Refuse roll when `maxRollsPerDay > 0` & todayCount ≥ `maxRollsPerDay`. Check daily limit BEFORE balance.
+V40: roll entry. Roll writes 1 spend: `subtype "gacha"`, `chips = -cost + rebate`, `outcome`, ⊥ `reward`. Rebate in same entry, never separate credit. Gacha writes ⊥ credit → earn stats ⊥ show roll, only raw balance moves. Roll may net positive (design B).
+V41: gacha separate in aggregate. `aggregate()` ⊥ count gacha spend in `purchased`; reports `gachaRolls`,`gachaRebated`,`gachaClaims` (§I). Gacha never in `chipsBySource`,`chipsByTier`,`critCount`.
+V42: conditional section. Gacha section at top of shop, heading `🎰 Gacha`, thin divider below/above reward list. Shown only when `gacha.enabled`. Visibility = presence of whole section. ⊥ collapse control.
+V43: roll button + disabled states. Label `Roll Gacha (X chips)`. Tap target ≥ 40px. Two disabled states, two tooltips: balance < cost → disabled+dim, `Not enough chips`; daily limit reached (not unlimited) → disabled, `No rolls left today`. When limit applies (not unlimited) label = `Roll Gacha (X chips) · n/max today`; hide counter when `maxRollsPerDay`==0. Button locked during reveal anim (stops double spend). Reduced-motion path immediate → needs no lock.
+V44: tiered reveal (CSS + emoji only, ⊥ libs). Section shake ≤ 300ms, then per-result treatment. Placeholder holds reveal area before roll (⊥ layout jump), text `Roll the gacha to see your luck.`. Result stays until next roll | leave screen. Treatments:
+- nothing: small, teasing, gentle fade. text random ∈ {`Nope! LMAO 🤣`,`Nope! 🤣`,`Better luck... nah 💀`,`Empty. Skill issue.`}
+- rebate_small: coin bounce, colour `--mf-coin`. text `+X chips! 🪙`
+- rebate_big: coin shower|scale-pop, brighter. text `+X chips!! 🎉`
+- free_reward: full centred burst overlay, scale-in. text `JACKPOT! 🎉 Pick your reward!` → picker opens (V51)
+
+  small|big split from outcome table. `nothing` text random per roll.
+V45: jackpot overlay ≠ banned modal. Free-reward celebration = overlay, short, ⊥ block user, carries ⊥ decision. On-screen = `gacha.jackpotPopupMs` (default 3000ms). Tap dismisses sooner. After overlay → picker opens. ⊥ the ConfirmModal picker PRD bans. Reduced-motion → short handoff ~400ms, ignores setting.
+V46: free reward w/ empty pool. `free_reward` occurs but no reward has capacity → result becomes `nothing`. Roll stands, chips spent, daily limit used. ⊥ change screen. ⊥ pre-check pool (would leak table info). Reveal shows teasing headline `Free reward!`, then `No rewards, huh? LOL too bad 🤣`, then dim honest hint `Every reward is sold out or at capacity — nothing to grant.` Picker opens only w/ non-empty list.
+V47: reduced motion + sound. All motion inside `@media (prefers-reduced-motion: no-preference)`. Reduced → immediate text change, ⊥ shake/burst; jackpot → straight to picker. ⊥ sound.
+V48: free win = open purchase, no cost, claimed later. Free reward = open purchase in "Waiting to claim" queue, granted at 0 chip cost. User claims later via usual claim flow (V8). ⊥ immediate claim.
+V49: grant marker. At pick, write spend `{reward: X, price: 0, subtype: "gacha", outcome: "free_reward"}`. ⊥ `chips` → counts 0 in balance. `subtype "gacha"` → aggregate ⊥ count in `purchased`. Gacha-origin proof on this marker. Later claim = normal `{kind:"claim", reward:X}`, ⊥ `source`.
+V50: `grantFree` helper (new, pure). ⊥ reuse `purchase()` (it checks balance can pay `r.price` → would refuse free win for broke user). Add to `rewards.ts`:
+```ts
+/** Free grant: an open purchase at no cost. It checks capacity only. */
+export function grantFree(r: Reward, today: string): boolean {
+  if (!hasCapacity(r)) return false;
+  r.purchasedCount++;
+  r.openPurchaseDates.push(today);
+  r.state = deriveState(r);
+  return true;
+}
+```
+V51: picker screen. `Screen` type → `"home" | "add" | "picker"`. `render()` gets `"picker"` branch, same screen-swap as `"add"`. ⊥ modal. Header `Choose your free reward`. Lists ∀ reward w/ capacity, ignores price+balance (free), sorts like shop. Card compact, reuses `.mf-card`; shows `Free` badge in place of price+buy button. On select → `grantFree(r, today)`, write grant marker, write reward note, screen→`"home"`, render. May show 150ms pulse on chosen card before swap. Back button forfeits win (⊥ grant, ⊥ refund; roll cost stays spent). Picker reached only after `free_reward` roll. ⊥ nav button to picker.
+V52: reward metadata model. `Reward` gets optional `desc` (≤280 chars) + `emoji`. Both top-level (Dataview), omit when absent. Pattern of V25.
+V53: emoji validation. Valid emoji = exactly 1 emoji grapheme (family 👨‍👩‍👧, flag 🇮🇩, skin-tone 👍🏽 each = 1). Refuse text, >1 emoji, empty. Pure helper in `rewards.ts`, form reuses:
+```ts
+const EMOJI_RE = /\p{Extended_Pictographic}|\p{Regional_Indicator}|\u{20E3}/u; // +keycap mark, B1
+export function isSingleEmoji(s: string): boolean {
+  const t = s.trim();
+  if (!t) return false;
+  const g = [...new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(t)];
+  return g.length === 1 && EMOJI_RE.test(t);
+}
+```
+  Obsidian (Electron) has `Intl.Segmenter`. Field optional → empty valid. Invalid → inline error, stops save (pattern V23).
+V54: card visual slot + order. Applies to shop card + queue card, ⊥ ledger row. Slot = thumbnail square. Order thumbnail → emoji → nothing:
+- `thumbnail` present → `<img>` as today, `onerror` removes broken image.
+- `thumbnail` absent & `emoji` present → emoji tile `<div class="mf-thumb-emoji">`, large centred emoji in same square. Card gets `has-thumb` layout.
+- both absent → nothing in slot, text-only card as today.
+
+  Slot chosen from data only, ⊥ from runtime image state. Broken thumbnail → text-only; emoji ⊥ appear as fallback for broken image.
+V55: desc line + CSS clamp. Card shows `desc` below name, inside `mf-card-body` below `mf-top` row, `<div class="mf-desc">`. Clip 2 lines via CSS: `-webkit-line-clamp: 2`, `overflow: hidden`, `display: -webkit-box`, `-webkit-box-orient: vertical`. ⊥ JS char count, ⊥ `Platform.isMobile` check. Clamp counts lines, reflows any width. Omit element when `desc` absent.
+V56: form fields. `FormState` gets `desc` (string) + `emoji` (string). `blankForm` sets each "". `formFrom(r)` sets `desc`=`r.desc`||"", `emoji`=`r.emoji`||"". Add Emoji field = single-line `<input>`, inline error from `isSingleEmoji`, stops save. `valid()` gets `emojiOk = !f.emoji.trim() || isSingleEmoji(f.emoji.trim())`. Add Description field = `<textarea maxlength="280">`, ⊥ live counter (`maxlength` sets limit). On save write each field only when non-empty.
+V57: metadata regression. Reward w/ neither `desc` nor `emoji` → same card as before. Metadata ⊥ change economy (price/payout/buy/claim/aggregate/state). Same as purchasable fields V25.
+
 ## §T
 
 id|status|task|cites
@@ -152,7 +263,18 @@ T21|x|editable toast templates {{var}} + claim-list CRUD + reset-to-default|V31,
 T22|x|rescan-vault command: walk in-scope files thru reconcileLine, idempotent backfill|V32,V30,V13,I.cmd
 T23|x|auto monthly roll on load for missing closed months, silent|V33,V16
 T24|x|panel current-month stats row from ledger aggregate|V34,V16
+T25|x|signed `SpendEntry.chips`; `balance()` adds spend; purchase writes `-price` & refuses when balance too low|V6,V7,V35,V36
+T26|x|add `gacha` config key + settings tab; toggle always shown; hide cost/table/limit/popup when off; rebuild via `this.display()`|V37,V42,I.config
+T27|x|roll engine: weights→probabilities, select result, daily limit from ledger, write net-chips spend entry|V38,V39,V40
+T28|x|keep gacha separate in `aggregate()`; add `gachaRolls`/`gachaRebated`/`gachaClaims`; show `gachaClaims` in month row|V16,V41
+T29|x|shop gacha section, roll button, two disabled states, counter|V42,V43
+T30|x|tiered CSS reveal, jackpot overlay, empty-pool result, reduced-motion path|V44,V45,V46,V47
+T31|x|`grantFree` helper, `"picker"` screen, grant-marker entry, forfeit on Back|V48,V49,V50,V51
+T32|x|`isSingleEmoji` helper + 1 self-check|V53
+T33|x|`Reward.desc`/`Reward.emoji` fields, card slot order, `.mf-thumb-emoji` + `.mf-desc` clamp styles|V52,V54,V55,V57
+T34|x|Emoji input, Description textarea, validation|V56
 
 ## §B
 
 id|date|cause|fix
+B1|2026-08-10|V53 `EMOJI_RE` missed keycap seq (`1️⃣`) — U+20E3 mark ∉ `Extended_Pictographic`, so own AC20 example failed|add `|\u{20E3}` alt to EMOJI_RE (V53)

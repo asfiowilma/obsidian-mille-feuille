@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  deriveState, canBuy, purchase, claim, isSoldOut, isStale, remaining, slug, type Reward,
+  deriveState, canBuy, purchase, claim, isSoldOut, isStale, remaining, slug,
+  grantFree, isSingleEmoji, type Reward,
 } from "../src/rewards.js";
 
 const mk = (over: Partial<Reward> = {}): Reward => ({
@@ -57,6 +58,22 @@ test("isStale when oldest open older than staleAfterDays (V11)", () => {
   const r = mk({ purchasedCount: 1, openPurchaseDates: ["2026-08-01"] });
   assert.equal(isStale(r, "2026-08-09", 7), true); // 8 days > 7
   assert.equal(isStale(r, "2026-08-07", 7), false); // 6 days
+});
+
+test("grantFree grants at no cost, checks capacity only (V50)", () => {
+  const r = mk({ price: 500 });
+  assert.equal(grantFree(r, "2026-08-10"), true); // balance never consulted
+  assert.equal(r.purchasedCount, 1);
+  assert.deepEqual(r.openPurchaseDates, ["2026-08-10"]);
+  assert.equal(r.state, "purchased");
+  // sold-out reward cannot be granted
+  const sold = mk({ servings: 1, purchasedCount: 1, claimedCount: 1, openPurchaseDates: [] });
+  assert.equal(grantFree(sold, "2026-08-10"), false);
+});
+
+test("isSingleEmoji: one grapheme incl ZWJ/flag/skin-tone; rejects text & multi (V53)", () => {
+  for (const ok of ["😀", "👨‍👩‍👧", "🇮🇩", "👍🏽", "1️⃣"]) assert.equal(isSingleEmoji(ok), true, ok);
+  for (const bad of ["", "ab", "😀😀", "A", "5"]) assert.equal(isSingleEmoji(bad), false, JSON.stringify(bad));
 });
 
 test("slug from name (V23)", () => {

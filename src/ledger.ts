@@ -17,24 +17,32 @@ export interface ReversalEntry {
   reversalOf: string; // key of the credit reversed
   chips: number; // negative
 }
+export type GachaOutcomeType = "nothing" | "rebate_small" | "rebate_big" | "free_reward";
+
 export interface SpendEntry {
   kind: "spend";
   date: string;
-  reward: string;
-  price: number;
+  reward?: string; // absent on a gacha ROLL row; present on a purchase + free-grant marker
+  price?: number; // present on a purchase + free-grant marker (0); absent on a gacha roll
+  chips?: number; // NEW signed. purchase = -price. gacha roll = -cost + rebate. absent = counts 0. §V35
+  subtype?: "gacha"; // NEW marks a gacha spend (roll or free-grant marker). §V40,§V49
+  outcome?: GachaOutcomeType; // gacha only
+  value?: number; // gacha rebate: chips the rebate returned (drives gachaRebated stat). §V41
 }
 export interface ClaimEntry {
   kind: "claim";
   date: string;
   reward: string;
+  // §V49: no `source` — gacha origin proof lives on the grant marker, not the claim.
 }
 export type LedgerEntry = CreditEntry | ReversalEntry | SpendEntry | ClaimEntry;
 
-/** Balance = sum of chips over credit + reversal entries. Spend/claim never move it. §V3,§V6 */
+/** Balance = sum of chips over credit + reversal + spend entries. §V6,§V35 (spend counts e.chips ?? 0). */
 export function balance(entries: LedgerEntry[]): number {
   let b = 0;
   for (const e of entries) {
     if (e.kind === "credit" || e.kind === "reversal") b += e.chips;
+    else if (e.kind === "spend") b += e.chips ?? 0; // pre-fix spend has no chips → 0
   }
   return b;
 }
@@ -64,6 +72,9 @@ export interface MonthlyAggregate {
   purchased: number;
   claimed: number;
   reversals: number;
+  gachaRolls: number; // §V41 spend, subtype gacha, reward absent
+  gachaRebated: number; // §V41 total chips rebate results returned
+  gachaClaims: number; // §V41 free rewards won (grant markers) — separate from paid `claimed`
 }
 
 /** Closed months (< current) holding ≥1 credit but no aggregate yet, oldest-first. §V33 */
@@ -84,6 +95,7 @@ export function aggregate(entries: LedgerEntry[], month: string): MonthlyAggrega
   const chipsByTier: Record<string, number> = {};
   const chipsBySource: Record<string, number> = {};
   let critCount = 0, purchased = 0, claimed = 0, reversals = 0;
+  let gachaRolls = 0, gachaRebated = 0, gachaClaims = 0;
   for (const e of inMonth) {
     switch (e.kind) {
       case "credit": {
@@ -94,9 +106,15 @@ export function aggregate(entries: LedgerEntry[], month: string): MonthlyAggrega
         break;
       }
       case "reversal": reversals++; break;
-      case "spend": purchased++; break;
+      case "spend":
+        if (e.subtype === "gacha") { // §V41 gacha never counts as a reward purchase
+          if (e.reward === undefined) gachaRolls++; // roll row
+          else if (e.outcome === "free_reward") gachaClaims++; // grant marker
+          if (e.value) gachaRebated += e.value;
+        } else purchased++;
+        break;
       case "claim": claimed++; break;
     }
   }
-  return { month, chipsByTier, chipsBySource, critCount, purchased, claimed, reversals };
+  return { month, chipsByTier, chipsBySource, critCount, purchased, claimed, reversals, gachaRolls, gachaRebated, gachaClaims };
 }

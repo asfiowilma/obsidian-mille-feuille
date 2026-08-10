@@ -15,7 +15,8 @@ import {
   type CreditEntry,
 } from "./ledger.js";
 import type { Reward } from "./rewards.js";
-import { isSoldOut, purchase, claim as claimReward, slug } from "./rewards.js";
+import { isSoldOut, purchase, claim as claimReward, slug, hasCapacity, grantFree } from "./rewards.js";
+import { canRoll, rollOutcome, rollNet, type GachaOutcome, type RollDenial } from "./gacha.js";
 import { parseLine, habitKey, taskKey, decideAction, inScanScope } from "./scan.js";
 import { CritStreak, AffordabilityTracker } from "./toasts.js";
 import { renderMsg, renderClaim, critStreakCopy } from "./messages.js";
@@ -172,7 +173,7 @@ export default class MilleFeuillePlugin extends Plugin {
       if (res.reason === "no-capacity") notify(renderMsg(m, "soldOut", { name: r.name }));
       return;
     }
-    const spend: LedgerEntry = { kind: "spend", date: today(), reward: r.name, price: r.price };
+    const spend: LedgerEntry = { kind: "spend", date: today(), reward: r.name, price: r.price, chips: -r.price };
     this.entries.push(spend);
     await this.store.appendLedger(spend);
     await this.store.writeReward(r);
@@ -191,6 +192,44 @@ export default class MilleFeuillePlugin extends Plugin {
     const m = this.settings.messages;
     notify(isSoldOut(r) ? renderMsg(m, "fullyClaimed", { name: r.name }) : renderClaim(m, { name: r.name }, this.rng));
     this.refreshViews();
+  }
+
+  // ---- gacha (anti-loop: writes only spend entries, never credit) §V3,§V40 ----
+  /** §V37,§V38,§V39,§V40. Guards, writes the net-chips roll entry, returns the reveal payload. */
+  async roll(): Promise<
+    | { ok: false; reason: RollDenial }
+    | { ok: true; outcome: GachaOutcome; net: number; hasPool: boolean }
+  > {
+    const g = this.settings.gacha;
+    const guard = canRoll(g, this.entries, this.balance(), today());
+    if (!guard.ok) return guard;
+    const outcome = rollOutcome(g, this.rng);
+    const net = rollNet(g.cost, outcome);
+    const spend: LedgerEntry = {
+      kind: "spend", date: today(), subtype: "gacha", chips: net, outcome: outcome.type,
+    };
+    if (outcome.value !== undefined && (outcome.type === "rebate_small" || outcome.type === "rebate_big"))
+      spend.value = outcome.value; // §V41 stat source
+    this.entries.push(spend);
+    await this.store.appendLedger(spend);
+    await this.store.writeWalletCache(this.balance());
+    this.afford.check(this.rewards, this.balance()); // rebate can move affordability baseline
+    // §V46: pool checked AFTER the roll, never before (no info leak).
+    const hasPool = this.rewards.some((r) => hasCapacity(r));
+    return { ok: true, outcome, net, hasPool };
+  }
+
+  /** §V48,§V49,§V50: free win = open purchase at no cost + gacha grant marker. */
+  async grantFreeReward(r: Reward): Promise<boolean> {
+    if (!grantFree(r, today())) return false;
+    const marker: LedgerEntry = {
+      kind: "spend", date: today(), reward: r.name, price: 0, subtype: "gacha", outcome: "free_reward",
+    };
+    this.entries.push(marker);
+    await this.store.appendLedger(marker);
+    await this.store.writeReward(r);
+    this.refreshViews();
+    return true;
   }
 
   async addReward(r: Reward): Promise<void> {

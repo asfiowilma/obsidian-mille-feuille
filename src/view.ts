@@ -3,8 +3,10 @@ import type MilleFeuillePlugin from "./main.js";
 import type { Reward } from "./rewards.js";
 import {
   openCount, remaining, canBuy, isSoldOut, isStale, oldestOpenAgeDays, slug,
+  hasCapacity, isSingleEmoji,
 } from "./rewards.js";
 import { aggregate } from "./ledger.js";
+import { gachaActive, todayRollCount } from "./gacha.js";
 
 export const MILLE_VIEW = "mille-feuille-view";
 
@@ -13,7 +15,7 @@ const fmt = (n: number): string => (n === Infinity ? "∞" : n.toLocaleString())
 const countsLine = (r: Reward): string =>
   `${r.purchasedCount} bought · ${r.claimedCount} claimed · ${fmt(remaining(r))} left`;
 
-type Screen = "home" | "add";
+type Screen = "home" | "add" | "picker";
 
 interface FormState {
   name: string;
@@ -23,8 +25,10 @@ interface FormState {
   isPurchasable: boolean;
   url: string;
   thumb: string;
+  desc: string;
+  emoji: string;
 }
-const blankForm = (): FormState => ({ name: "", price: "", servingsMode: "one", n: "2", isPurchasable: false, url: "", thumb: "" });
+const blankForm = (): FormState => ({ name: "", price: "", servingsMode: "one", n: "2", isPurchasable: false, url: "", thumb: "", desc: "", emoji: "" });
 const formFrom = (r: Reward): FormState => ({
   name: r.name,
   price: String(r.price),
@@ -33,9 +37,24 @@ const formFrom = (r: Reward): FormState => ({
   isPurchasable: !!r.isPurchasable,
   url: r.purchaseUrl ?? "",
   thumb: r.thumbnail ?? "",
+  desc: r.desc ?? "",
+  emoji: r.emoji ?? "",
 });
 
 type ShopSort = "name" | "price-low" | "price-high";
+
+// §V44 nothing-result copy, random per roll.
+const NOTHING_TEXT = ["Nope! LMAO 🤣", "Nope! 🤣", "Better luck... nah 💀", "Empty. Skill issue."];
+const reducedMotion = (): boolean => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+// Static reveal payload — persists across re-renders until the next roll. §V44
+interface GachaReveal {
+  big: string;
+  msg: string;
+  sub?: string;
+  hint?: string;
+  win: boolean;
+}
 
 export class MilleFeuilleView extends ItemView {
   private screen: Screen = "home";
@@ -44,6 +63,8 @@ export class MilleFeuilleView extends ItemView {
   private shopQuery = "";
   private shopSort: ShopSort = "name";
   private shopAffordable = false;
+  private gachaReveal: GachaReveal | null = null;
+  private gachaAnimating = false;
 
   constructor(leaf: WorkspaceLeaf, private plugin: MilleFeuillePlugin) {
     super(leaf);
@@ -60,6 +81,7 @@ export class MilleFeuilleView extends ItemView {
     root.empty();
     root.addClass("mf-root");
     if (this.screen === "home") this.renderHome(root);
+    else if (this.screen === "picker") this.renderPicker(root);
     else this.renderAdd(root);
   }
 
@@ -83,6 +105,10 @@ export class MilleFeuilleView extends ItemView {
     this.stat(statRow, fmt(earned), "earned this month");
     this.stat(statRow, String(stats.claimed), "claimed");
     this.stat(statRow, String(stats.critCount), "crits");
+    if (stats.gachaClaims > 0) this.stat(statRow, String(stats.gachaClaims), "gacha wins"); // §V41 separate from paid claims
+
+    // §V42 gacha section at top of shop, before the queue.
+    this.renderGacha(root);
 
     const rewards = p.rewards;
     const queue = rewards.filter((r) => openCount(r) > 0)
@@ -166,7 +192,7 @@ export class MilleFeuilleView extends ItemView {
   }
 
   private queueCard(root: HTMLElement, r: Reward, staleAfter: number): void {
-    const card = root.createDiv({ cls: "mf-card" + (r.thumbnail ? " has-thumb" : "") });
+    const card = root.createDiv({ cls: "mf-card" + (hasThumbSlot(r) ? " has-thumb" : "") });
     thumbEl(card, r);
     const body = card.createDiv({ cls: "mf-card-body" });
     const top = body.createDiv({ cls: "mf-top" });
@@ -174,6 +200,7 @@ export class MilleFeuilleView extends ItemView {
     main.createSpan({ cls: "mf-name", text: r.name });
     priceEl(main, r.price);
     this.cardActions(top, r);
+    descEl(body, r);
     const age = oldestOpenAgeDays(r, today());
     if (isStale(r, today(), staleAfter) && age !== null) {
       body.createDiv({ cls: "mf-stale-flag", text: `⚠ Bought ${age} days ago. Claim it before you forget.` });
@@ -185,7 +212,7 @@ export class MilleFeuilleView extends ItemView {
   }
 
   private shopCard(root: HTMLElement, r: Reward, bal: number): void {
-    const card = root.createDiv({ cls: "mf-card" + (r.thumbnail ? " has-thumb" : "") });
+    const card = root.createDiv({ cls: "mf-card" + (hasThumbSlot(r) ? " has-thumb" : "") });
     thumbEl(card, r);
     const body = card.createDiv({ cls: "mf-card-body" });
     const top = body.createDiv({ cls: "mf-top" });
@@ -193,6 +220,7 @@ export class MilleFeuilleView extends ItemView {
     main.createSpan({ cls: "mf-name", text: r.name });
     priceEl(main, r.price);
     this.cardActions(top, r);
+    descEl(body, r);
 
     const link = (parent: HTMLElement) => {
       if (r.purchaseUrl) {
@@ -242,6 +270,159 @@ export class MilleFeuilleView extends ItemView {
     else if (openCount(r) > 0) { badgeCls = "purch"; badgeText = "Purchased"; line = `${line} · oldest ${oldestOpenAgeDays(r, today())}d`; }
     row.createSpan({ cls: `mf-badge ${badgeCls}`, text: badgeText });
     row.createSpan({ cls: "mf-lc" + (stale ? " st" : ""), text: (stale ? "⚠ " : "") + line });
+  }
+
+  // ---------------- GACHA (§V42-§V47) ----------------
+  private renderGacha(root: HTMLElement): void {
+    const p = this.plugin;
+    const g = p.settings.gacha;
+    if (!gachaActive(g)) return; // §V37 section presence == visibility, no collapse control
+    const bal = p.balance();
+    const rolls = todayRollCount(p.entries, today());
+    const limited = g.maxRollsPerDay > 0;
+    const capped = limited && rolls >= g.maxRollsPerDay;
+
+    const head = this.section(root, "🎰 Gacha", null);
+    if (limited) head.createSpan({ cls: "mf-gacha-rolls" + (capped ? " low" : ""), text: `${rolls}/${g.maxRollsPerDay} today` });
+
+    const box = root.createDiv({ cls: "mf-gacha" });
+    const stage = box.createDiv({ cls: "mf-gacha-stage" });
+    this.paintStage(stage);
+
+    const btn = box.createEl("button", { cls: "mf-roll-btn" });
+    let label = `Roll Gacha (${fmt(g.cost)} chips)`;
+    if (limited) label += ` · ${rolls}/${g.maxRollsPerDay} today`; // §V43 counter, hidden when unlimited
+    btn.setText(label);
+    btn.setAttr("aria-label", `Roll the gacha for ${fmt(g.cost)} chips`);
+
+    const hint = box.createDiv({ cls: "mf-gacha-hint" });
+    const insufficient = bal < g.cost;
+    if (capped) { btn.disabled = true; btn.setAttr("title", "No rolls left today"); hint.addClass("err"); hint.setText("No rolls left today"); }
+    else if (insufficient) { btn.disabled = true; btn.setAttr("title", "Not enough chips"); hint.addClass("err"); hint.setText("Not enough chips"); }
+    else hint.setText(" ");
+    if (this.gachaAnimating) btn.disabled = true; // §V43 locked during reveal
+    btn.onclick = () => void this.doRoll(stage, box);
+
+    root.createDiv({ cls: "mf-gacha-div" }); // §V42 divider above reward list
+  }
+
+  private paintStage(stage: HTMLElement): void {
+    stage.empty();
+    const r = this.gachaReveal;
+    if (!r) {
+      stage.addClass("pre"); // §V44 placeholder holds the area, no layout jump
+      stage.createDiv({ cls: "mf-g-big", text: "🎲" });
+      stage.createDiv({ cls: "mf-g-msg", text: "Roll the gacha to see your luck." });
+      return;
+    }
+    stage.removeClass("pre");
+    stage.toggleClass("win", r.win);
+    stage.createDiv({ cls: "mf-g-big", text: r.big });
+    stage.createDiv({ cls: "mf-g-msg", text: r.msg });
+    if (r.sub) stage.createDiv({ cls: "mf-g-sub", text: r.sub });
+    if (r.hint) stage.createDiv({ cls: "mf-g-dim", text: r.hint });
+  }
+
+  private async doRoll(stage: HTMLElement, box: HTMLElement): Promise<void> {
+    if (this.gachaAnimating) return;
+    const res = await this.plugin.roll();
+    if (!res.ok) return; // button was guarded; nothing to do
+    this.gachaAnimating = true;
+    const rm = reducedMotion();
+    const o = res.outcome;
+    const value = o.value ?? 0;
+
+    // free_reward routes to the picker (or degrades on an empty pool). §V45,§V46
+    if (o.type === "free_reward") {
+      if (res.hasPool) { this.jackpot(box, rm); return; }
+      // §V46 empty pool → teasing headline, then honest dim hint. Roll still spent.
+      this.gachaReveal = {
+        big: "🎁", msg: "No rewards, huh? LOL too bad 🤣",
+        hint: "Every reward is sold out or at capacity — nothing to grant.", win: false,
+      };
+      this.commitReveal(stage, rm, "mf-anim-fade");
+      return;
+    }
+
+    if (o.type === "nothing") {
+      this.gachaReveal = { big: "🫠", msg: pick(NOTHING_TEXT), win: false };
+      this.commitReveal(stage, rm, "mf-anim-wobble");
+    } else if (o.type === "rebate_small") {
+      this.gachaReveal = { big: "🪙", msg: `+${fmt(value)} chips! 🪙`, win: true };
+      this.commitReveal(stage, rm, "mf-anim-bounce");
+    } else {
+      this.gachaReveal = { big: "🪙", msg: `+${fmt(value)} chips!! 🎉`, win: true };
+      this.commitReveal(stage, rm, "mf-anim-pop");
+    }
+  }
+
+  /** Shake → paint result → unlock + full render. Reduced motion skips the shake. §V44,§V47 */
+  private commitReveal(stage: HTMLElement, rm: boolean, anim: string): void {
+    const done = () => { this.gachaAnimating = false; this.render(); };
+    if (rm) { this.paintStage(stage); done(); return; }
+    stage.addClass("mf-shaking");
+    window.setTimeout(() => {
+      stage.removeClass("mf-shaking");
+      this.paintStage(stage);
+      stage.addClass(anim);
+      window.setTimeout(done, 450);
+    }, 300);
+  }
+
+  /** §V45 short non-blocking overlay, then the picker. Not the banned ConfirmModal. */
+  private jackpot(box: HTMLElement, rm: boolean): void {
+    const ov = box.createDiv({ cls: "mf-jackpot" });
+    ov.createDiv({ cls: "mf-jp-big" + (rm ? "" : " mf-anim-pop"), text: "🎁" });
+    ov.createDiv({ cls: "mf-jp-h", text: "JACKPOT! 🎉" });
+    ov.createDiv({ cls: "mf-jp-sub", text: "Pick your reward!" });
+    let done = false;
+    const go = () => {
+      if (done) return; done = true;
+      this.gachaReveal = null; // fresh placeholder when we return home
+      this.gachaAnimating = false;
+      this.screen = "picker";
+      this.render();
+    };
+    ov.onclick = go; // tap dismisses early
+    const ms = rm ? 400 : this.plugin.settings.gacha.jackpotPopupMs;
+    window.setTimeout(go, ms);
+  }
+
+  // ---------------- PICKER (§V51) ----------------
+  private renderPicker(root: HTMLElement): void {
+    const head = root.createDiv({ cls: "mf-add-head" });
+    const back = head.createEl("button", { cls: "mf-back", text: "‹ Back" });
+    back.onclick = () => { this.screen = "home"; this.render(); }; // §V51 Back forfeits — no grant, no refund
+    head.createSpan({ cls: "mf-add-ttl", text: "Choose your free reward" });
+
+    root.createDiv({ cls: "mf-won", text: "🎉 Jackpot — pick one below. It lands in Waiting to claim, no chips spent." });
+
+    // §V51 every reward with capacity, price+balance ignored, sorted like the shop.
+    const pool = this.plugin.rewards.filter((r) => hasCapacity(r)).sort((a, b) => a.name.localeCompare(b.name));
+    this.section(root, "Available rewards", `${pool.length} available`);
+    for (const r of pool) this.pickerCard(root, r);
+    root.createDiv({ cls: "mf-empty-q", text: "Back forfeits the win — the roll's chips stay spent, nothing is granted." });
+  }
+
+  private pickerCard(root: HTMLElement, r: Reward): void {
+    const card = root.createDiv({ cls: "mf-card mf-pick-card" + (hasThumbSlot(r) ? " has-thumb" : "") });
+    card.tabIndex = 0;
+    thumbEl(card, r);
+    const body = card.createDiv({ cls: "mf-card-body" });
+    const top = body.createDiv({ cls: "mf-top" });
+    const main = top.createDiv({ cls: "mf-top-main" });
+    main.createSpan({ cls: "mf-name", text: r.name });
+    top.createSpan({ cls: "mf-badge avail", text: "Free" }); // §V51 Free badge in place of price + buy
+    descEl(body, r);
+    body.createDiv({ cls: "mf-counts", text: countsLine(r) });
+    const grant = async () => {
+      if (!reducedMotion()) { card.addClass("mf-pulse"); await sleep(150); } // §V51 optional pulse before swap
+      await this.plugin.grantFreeReward(r);
+      this.screen = "home";
+      this.render();
+    };
+    card.onclick = () => void grant();
+    card.onkeydown = (e: KeyboardEvent) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); void grant(); } };
   }
 
   // ---------------- ADD ----------------
@@ -321,6 +502,25 @@ export class MilleFeuilleView extends ItemView {
     thumbInput.value = f.thumb;
     thumbInput.oninput = () => { f.thumb = thumbInput.value; update(); };
 
+    // emoji (optional) §V56 — inline error, stops save
+    const emojiField = field(root, "Emoji (optional)");
+    const emojiInput = emojiField.createEl("input", { attr: { type: "text", placeholder: "🎧" } });
+    emojiInput.value = f.emoji;
+    const emojiErr = emojiField.createDiv({ cls: "mf-field-err" });
+    emojiErr.hide();
+    emojiInput.oninput = () => {
+      f.emoji = emojiInput.value;
+      if (f.emoji.trim() && !isSingleEmoji(f.emoji.trim())) { emojiErr.setText("Enter exactly one emoji."); emojiErr.show(); }
+      else emojiErr.hide();
+      update();
+    };
+
+    // description (optional) §V56 — maxlength caps at 280, no live counter
+    const descField = field(root, "Description (optional)");
+    const descInput = descField.createEl("textarea", { attr: { maxlength: "280", rows: "2", placeholder: "Noise-cancelling, over-ear." } });
+    descInput.value = f.desc;
+    descInput.oninput = () => { f.desc = descInput.value; update(); };
+
     // footer
     const foot = root.createDiv({ cls: "mf-form-foot" });
     const cancel = foot.createEl("button", { cls: "mf-btn btn-ghost", text: "Cancel" });
@@ -333,7 +533,8 @@ export class MilleFeuilleView extends ItemView {
       const nOk = f.servingsMode !== "n" || parseInt(f.n || "0", 10) >= 2;
       const urlOk = !f.isPurchasable || /^https?:\/\/.+/.test(f.url.trim());
       const thumbOk = !f.thumb.trim() || /^https?:\/\/.+/.test(f.thumb.trim());
-      return name.length > 0 && !dupName() && price >= 1 && nOk && urlOk && thumbOk;
+      const emojiOk = !f.emoji.trim() || isSingleEmoji(f.emoji.trim()); // §V56
+      return name.length > 0 && !dupName() && price >= 1 && nOk && urlOk && thumbOk && emojiOk;
     };
     const update = () => { create.disabled = !valid(); };
     update();
@@ -352,6 +553,8 @@ export class MilleFeuilleView extends ItemView {
       };
       if (f.isPurchasable) { r.isPurchasable = true; if (f.url.trim()) r.purchaseUrl = f.url.trim(); }
       if (f.thumb.trim()) r.thumbnail = f.thumb.trim();
+      if (f.emoji.trim()) r.emoji = f.emoji.trim(); // §V56 write only when non-empty
+      if (f.desc.trim()) r.desc = f.desc.trim();
       if (prev) await this.plugin.updateReward(prev.name, r);
       else await this.plugin.addReward(r);
       this.editing = null;
@@ -360,6 +563,9 @@ export class MilleFeuilleView extends ItemView {
     };
   }
 }
+
+function pick<T>(a: T[]): T { return a[Math.floor(Math.random() * a.length)]; }
+const sleep = (ms: number): Promise<void> => new Promise((r) => window.setTimeout(r, ms));
 
 function field(root: HTMLElement, label: string): HTMLElement {
   const wrap = root.createDiv({ cls: "mf-field" });
@@ -370,10 +576,21 @@ function priceEl(parent: HTMLElement, price: number): void {
   const el = parent.createSpan({ cls: "mf-price", text: fmt(price) });
   el.createSpan({ cls: "u", text: " chips" });
 }
+// §V54 slot order: thumbnail → emoji → nothing. Chosen from data, not runtime image state.
 function thumbEl(parent: HTMLElement, r: Reward): void {
-  if (!r.thumbnail) return; // hide if empty
-  const img = parent.createEl("img", { cls: "mf-thumb", attr: { src: r.thumbnail, alt: "", loading: "lazy" } });
-  img.onerror = () => img.remove(); // drop broken image, keep layout clean
+  if (r.thumbnail) {
+    const img = parent.createEl("img", { cls: "mf-thumb", attr: { src: r.thumbnail, alt: "", loading: "lazy" } });
+    img.onerror = () => img.remove(); // broken image → text-only; emoji is NOT a fallback (§V54)
+    return;
+  }
+  if (r.emoji) parent.createDiv({ cls: "mf-thumb-emoji", text: r.emoji });
+}
+// §V55 two-line CSS clamp; omitted when absent.
+function descEl(body: HTMLElement, r: Reward): void {
+  if (r.desc) body.createDiv({ cls: "mf-desc", text: r.desc });
+}
+function hasThumbSlot(r: Reward): boolean {
+  return !!r.thumbnail || !!r.emoji; // §V54 emoji tile also earns the has-thumb layout
 }
 
 // Delete-confirm dialog — no quick delete; destructive action uses mod-warning.

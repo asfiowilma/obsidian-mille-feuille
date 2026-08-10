@@ -7,14 +7,23 @@ import {
 const credit = (key: string, chips: number, extra: Partial<LedgerEntry> = {}): LedgerEntry =>
   ({ kind: "credit", date: "2026-08-09", source: "task", key, base: chips, crit: null, chips, tier: null, ...extra } as LedgerEntry);
 
-test("balance = sum of credit + reversal only (V3,V6)", () => {
+test("balance = credit + reversal + signed spend; pre-fix spend counts 0 (V6,V35)", () => {
   const e: LedgerEntry[] = [
     credit("a", 10),
-    { kind: "spend", date: "2026-08-09", reward: "X", price: 500 },
+    { kind: "spend", date: "2026-08-09", reward: "X", price: 500 }, // pre-fix: no chips → 0
+    { kind: "spend", date: "2026-08-09", reward: "Y", price: 4, chips: -4 }, // purchase lowers balance
     { kind: "claim", date: "2026-08-09", reward: "X" },
     credit("b", 20),
   ];
-  assert.equal(balance(e), 30); // spend/claim don't move balance
+  assert.equal(balance(e), 26); // 10 + 20 - 4; pre-fix spend + claim move nothing
+});
+
+test("gacha rebate_big can net a positive balance move (V40, design B)", () => {
+  const e: LedgerEntry[] = [
+    credit("a", 5),
+    { kind: "spend", date: "2026-08-09", subtype: "gacha", chips: 3, outcome: "rebate_big", value: 8 },
+  ];
+  assert.equal(balance(e), 8);
 });
 
 test("unchecked completion nets to zero via reversal (V6,V14)", () => {
@@ -59,8 +68,24 @@ test("aggregate rolls month from ledger only (V16)", () => {
   assert.equal(a.purchased, 1);
   assert.equal(a.claimed, 1);
   assert.equal(a.reversals, 1);
+  assert.equal(a.gachaRolls, 0);
   // July credit excluded
   assert.equal(a.chipsByTier.base, 10); // only August 'a' credit counted under base
+});
+
+test("aggregate keeps gacha separate: rolls/rebated/claims, not in purchased (V16,V41)", () => {
+  const e: LedgerEntry[] = [
+    { kind: "spend", date: "2026-08-09", reward: "Spa", price: 5, chips: -5 }, // real purchase
+    { kind: "spend", date: "2026-08-09", subtype: "gacha", chips: -5, outcome: "nothing" }, // roll
+    { kind: "spend", date: "2026-08-10", subtype: "gacha", chips: -3, outcome: "rebate_small", value: 2 }, // roll + rebate
+    { kind: "spend", date: "2026-08-11", subtype: "gacha", chips: -5, outcome: "free_reward" }, // roll, empty pool
+    { kind: "spend", date: "2026-08-11", reward: "Book", price: 0, subtype: "gacha", outcome: "free_reward" }, // grant marker
+  ];
+  const a = aggregate(e, "2026-08");
+  assert.equal(a.purchased, 1); // only the real purchase
+  assert.equal(a.gachaRolls, 3); // three reward-less gacha spends
+  assert.equal(a.gachaRebated, 2);
+  assert.equal(a.gachaClaims, 1); // the grant marker
 });
 
 test("missingClosedMonths: closed months with credits and no aggregate, oldest-first (V33)", () => {

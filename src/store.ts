@@ -122,6 +122,8 @@ function rewardNote(r: Reward): string {
     if (r.purchaseUrl) fm.purchaseUrl = r.purchaseUrl;
   }
   if (r.thumbnail) fm.thumbnail = r.thumbnail;
+  if (r.desc) fm.desc = r.desc; // §V52 omit when absent
+  if (r.emoji) fm.emoji = r.emoji;
   return `---\n${stringifyYaml(fm)}---\n`;
 }
 
@@ -141,6 +143,8 @@ function normalizeReward(fm: Record<string, unknown>): Reward {
     if (typeof fm.purchaseUrl === "string") r.purchaseUrl = fm.purchaseUrl;
   }
   if (typeof fm.thumbnail === "string") r.thumbnail = fm.thumbnail;
+  if (typeof fm.desc === "string") r.desc = fm.desc;
+  if (typeof fm.emoji === "string") r.emoji = fm.emoji;
   r.state = deriveState(r);
   return r;
 }

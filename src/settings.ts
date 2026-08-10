@@ -2,9 +2,11 @@ import { App, PluginSettingTab, Setting } from "obsidian";
 import type MilleFeuillePlugin from "./main.js";
 import { DEFAULT_ECONOMY, type Economy } from "./economy.js";
 import { DEFAULT_MESSAGES, type Messages } from "./messages.js";
+import { DEFAULT_GACHA, type GachaConfig, type GachaOutcome } from "./gacha.js";
 
 export interface MilleFeuilleSettings {
   economy: Economy;
+  gacha: GachaConfig; // §I top-level, separate from economy
   baseFolder: string;
   scanInclude: string[]; // folder prefixes; empty = whole vault
   scanExclude: string[]; // folder prefixes
@@ -13,6 +15,7 @@ export interface MilleFeuilleSettings {
 
 export const DEFAULT_SETTINGS: MilleFeuilleSettings = {
   economy: structuredClone(DEFAULT_ECONOMY),
+  gacha: structuredClone(DEFAULT_GACHA),
   baseFolder: "mille-feuille",
   scanInclude: [],
   scanExclude: [],
@@ -105,7 +108,44 @@ export class MilleFeuilleSettingTab extends PluginSettingTab {
       e.staleAfterDays = v; await save();
     });
 
+    this.renderGacha(containerEl, save);
     this.renderMessages(containerEl, save);
+  }
+
+  // §V37,§V42 — toggle always shown; cost/table/limit/popup hidden when off. Rebuild via display().
+  private renderGacha(el: HTMLElement, save: () => Promise<void>): void {
+    const g = this.plugin.settings.gacha;
+    new Setting(el).setName("Gacha").setHeading();
+    new Setting(el)
+      .setName("Enable gacha")
+      .setDesc("Pay chips to roll for rebates and free rewards. Off hides all gacha UI.")
+      .addToggle((t) =>
+        t.setValue(g.enabled).onChange(async (v) => {
+          g.enabled = v; await save(); this.display(); // full rebuild reveals/hides the fields
+        })
+      );
+    if (!g.enabled) return;
+
+    numberField(el, "Cost per roll", "Chips spent on each roll.", g.cost, async (v) => {
+      g.cost = v; await save();
+    });
+    numberField(el, "Max rolls per day", "0 = no limit. Counted live from the ledger.", g.maxRollsPerDay, async (v) => {
+      g.maxRollsPerDay = v; await save();
+    });
+    numberField(el, "Jackpot popup (ms)", "How long the free-reward celebration stays on screen.", g.jackpotPopupMs, async (v) => {
+      g.jackpotPopupMs = v; await save();
+    });
+    new Setting(el)
+      .setName("Outcomes table")
+      .setDesc("One per line: type weight [value]. Types: nothing, rebate_small, rebate_big, free_reward. Probability = weight ÷ total.")
+      .addTextArea((t) => {
+        t.setValue(outcomesToStr(g.outcomes)).onChange(async (v) => {
+          const parsed = strToOutcomes(v);
+          if (parsed.length) { g.outcomes = parsed; await save(); }
+        });
+        t.inputEl.rows = 4;
+        t.inputEl.style.width = "300px";
+      });
   }
 
   // §V31 — editable toast templates + claim-list CRUD + reset-to-default.
@@ -175,6 +215,24 @@ function strToMap(s: string): Record<string, number> {
     const [k, v] = pair.split(":").map((x) => x.trim());
     const n = Number(v);
     if (k && n > 0) out[k] = n;
+  }
+  return out;
+}
+
+function outcomesToStr(os: GachaOutcome[]): string {
+  return os.map((o) => `${o.type} ${o.weight}${o.value !== undefined ? " " + o.value : ""}`).join("\n");
+}
+function strToOutcomes(s: string): GachaOutcome[] {
+  const types = new Set(["nothing", "rebate_small", "rebate_big", "free_reward"]);
+  const out: GachaOutcome[] = [];
+  for (const line of s.split("\n")) {
+    const [type, w, v] = line.trim().split(/\s+/);
+    if (!types.has(type)) continue;
+    const weight = Number(w);
+    if (!(weight >= 0)) continue;
+    const o: GachaOutcome = { type: type as GachaOutcome["type"], weight };
+    if (v !== undefined && !Number.isNaN(Number(v))) o.value = Number(v);
+    out.push(o);
   }
   return out;
 }

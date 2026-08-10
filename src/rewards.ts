@@ -14,6 +14,8 @@ export interface Reward {
   isPurchasable?: true; // §V25 written only when true
   purchaseUrl?: string;
   thumbnail?: string; // optional image URL shown on cards
+  desc?: string; // §V52 optional ≤280 chars, top-level for Dataview
+  emoji?: string; // §V52 optional single emoji grapheme
 }
 
 export function openCount(r: Reward): number {
@@ -74,6 +76,25 @@ export function purchase(r: Reward, balance: number, today: string): BuyResult {
   r.openPurchaseDates.push(today); // append oldest-first (dates monotonic)
   r.state = deriveState(r);
   return { ok: true };
+}
+
+/** Free grant: an open purchase at no cost. It checks capacity only. §V50 */
+export function grantFree(r: Reward, today: string): boolean {
+  if (!hasCapacity(r)) return false;
+  r.purchasedCount++;
+  r.openPurchaseDates.push(today);
+  r.state = deriveState(r);
+  return true;
+}
+
+// ⃣ = keycap enclosing mark, present in keycap sequences like 1️⃣ (spec regex missed it, B1).
+const EMOJI_RE = /\p{Extended_Pictographic}|\p{Regional_Indicator}|\u{20E3}/u;
+/** §V53 valid = exactly one emoji grapheme. Empty handled by caller (field optional). */
+export function isSingleEmoji(s: string): boolean {
+  const t = s.trim();
+  if (!t) return false;
+  const g = [...new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(t)];
+  return g.length === 1 && EMOJI_RE.test(t);
 }
 
 /** Claim FIFO: pop oldest open. Never credits chips. §V8 */
