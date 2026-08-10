@@ -54,6 +54,12 @@ npm run build   # typecheck + production build
 npm test        # run tests
 ```
 
+## Support
+
+Mille-feuille is free and MIT-licensed. If it brightens your day, you can tip the jar:
+
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/tulalyth/tip) <a href="https://trakteer.id/lyth/tip?open=true"><img height="32" src="https://edge-cdn.trakteer.id/images/embed/trbtn-red-2.png?v=14-05-2025" alt="Trakteer"></a>
+
 ## License
 
 MIT
