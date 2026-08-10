@@ -219,7 +219,14 @@ export class MilleFeuilleView extends ItemView {
     thumbEl(card, r);
     const body = card.createDiv({ cls: "mf-card-body" });
     this.cardActions(card, r); // §V absolute-cornered ⋯ menu, out of the content column
-    if (r.desc) setTooltip(card, r.desc); // §V styled Obsidian tooltip, not raw title attr
+    if (r.desc) {
+      setTooltip(card, r.desc); // §V styled tooltip on hover
+      card.addClass("mf-clickable");
+      card.onclick = (ev) => { // §V ...and a styled popover on click (buttons/links still work)
+        if ((ev.target as HTMLElement).closest("button, a")) return;
+        showDescPopover(r.desc!, ev.clientX, ev.clientY);
+      };
+    }
     body.createSpan({ cls: "mf-name", text: r.name });
     const affordable = canBuy(r, bal);
     if (!affordable) priceEl(body, r.price); // §V price shows here only when buy button is hidden
@@ -629,6 +636,18 @@ function descEl(body: HTMLElement, r: Reward): void {
 }
 function hasThumbSlot(r: Reward): boolean {
   return !!r.thumbnail || !!r.emoji; // §V54 emoji tile also earns the has-thumb layout
+}
+// §V styled desc popover on card click; one at a time, dismissed on outside click.
+function showDescPopover(text: string, x: number, y: number): void {
+  document.querySelectorAll(".mf-desc-pop").forEach((n) => n.remove());
+  const pop = document.body.createDiv({ cls: "mf-desc-pop", text });
+  const r = pop.getBoundingClientRect();
+  pop.style.left = Math.max(8, Math.min(x, window.innerWidth - r.width - 8)) + "px";
+  pop.style.top = Math.min(y + 12, window.innerHeight - r.height - 8) + "px";
+  const close = (e: MouseEvent) => {
+    if (!pop.contains(e.target as Node)) { pop.remove(); document.removeEventListener("mousedown", close); }
+  };
+  window.setTimeout(() => document.addEventListener("mousedown", close), 0);
 }
 
 // Delete-confirm dialog — no quick delete; destructive action uses mod-warning.
