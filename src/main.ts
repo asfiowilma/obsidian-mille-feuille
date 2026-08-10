@@ -36,6 +36,7 @@ export default class MilleFeuillePlugin extends Plugin {
   private streak = new CritStreak();
   private afford = new AffordabilityTracker();
   private rng: Rng = Math.random;
+  private busy = false; // reentrancy lock for money paths (buy/claim) — double-click guard
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -167,31 +168,43 @@ export default class MilleFeuillePlugin extends Plugin {
 
   // ---- shop ops (anti-loop: never credit chips) §V3 ----
   async buy(r: Reward): Promise<void> {
-    const m = this.settings.messages;
-    const res = purchase(r, this.balance(), today());
-    if (!res.ok) {
-      if (res.reason === "no-capacity") notify(renderMsg(m, "soldOut", { name: r.name }));
-      return;
+    if (this.busy) return; // double-click guard
+    this.busy = true;
+    try {
+      const m = this.settings.messages;
+      const res = purchase(r, this.balance(), today());
+      if (!res.ok) {
+        if (res.reason === "no-capacity") notify(renderMsg(m, "soldOut", { name: r.name }));
+        return;
+      }
+      const spend: LedgerEntry = { kind: "spend", date: today(), reward: r.name, price: r.price, chips: -r.price };
+      this.entries.push(spend);
+      await this.store.appendLedger(spend);
+      await this.store.writeReward(r);
+      await this.store.writeWalletCache(this.balance());
+      notify(renderMsg(m, "purchase", { name: r.name, price: r.price }));
+      this.afford.check(this.rewards, this.balance()); // update baseline after spend
+      this.refreshViews();
+    } finally {
+      this.busy = false;
     }
-    const spend: LedgerEntry = { kind: "spend", date: today(), reward: r.name, price: r.price, chips: -r.price };
-    this.entries.push(spend);
-    await this.store.appendLedger(spend);
-    await this.store.writeReward(r);
-    await this.store.writeWalletCache(this.balance());
-    notify(renderMsg(m, "purchase", { name: r.name, price: r.price }));
-    this.afford.check(this.rewards, this.balance()); // update baseline after spend
-    this.refreshViews();
   }
 
   async claim(r: Reward): Promise<void> {
-    if (!claimReward(r)) return;
-    const c: LedgerEntry = { kind: "claim", date: today(), reward: r.name };
-    this.entries.push(c);
-    await this.store.appendLedger(c);
-    await this.store.writeReward(r);
-    const m = this.settings.messages;
-    notify(isSoldOut(r) ? renderMsg(m, "fullyClaimed", { name: r.name }) : renderClaim(m, { name: r.name }, this.rng));
-    this.refreshViews();
+    if (this.busy) return; // double-click guard
+    this.busy = true;
+    try {
+      if (!claimReward(r)) return;
+      const c: LedgerEntry = { kind: "claim", date: today(), reward: r.name };
+      this.entries.push(c);
+      await this.store.appendLedger(c);
+      await this.store.writeReward(r);
+      const m = this.settings.messages;
+      notify(isSoldOut(r) ? renderMsg(m, "fullyClaimed", { name: r.name }) : renderClaim(m, { name: r.name }, this.rng));
+      this.refreshViews();
+    } finally {
+      this.busy = false;
+    }
   }
 
   // ---- gacha (anti-loop: writes only spend entries, never credit) §V3,§V40 ----
@@ -221,15 +234,21 @@ export default class MilleFeuillePlugin extends Plugin {
 
   /** §V48,§V49,§V50: free win = open purchase at no cost + gacha grant marker. */
   async grantFreeReward(r: Reward): Promise<boolean> {
-    if (!grantFree(r, today())) return false;
-    const marker: LedgerEntry = {
-      kind: "spend", date: today(), reward: r.name, price: 0, subtype: "gacha", outcome: "free_reward",
-    };
-    this.entries.push(marker);
-    await this.store.appendLedger(marker);
-    await this.store.writeReward(r);
-    this.refreshViews();
-    return true;
+    if (this.busy) return false; // double-click guard
+    this.busy = true;
+    try {
+      if (!grantFree(r, today())) return false;
+      const marker: LedgerEntry = {
+        kind: "spend", date: today(), reward: r.name, price: 0, subtype: "gacha", outcome: "free_reward",
+      };
+      this.entries.push(marker);
+      await this.store.appendLedger(marker);
+      await this.store.writeReward(r);
+      this.refreshViews();
+      return true;
+    } finally {
+      this.busy = false;
+    }
   }
 
   async addReward(r: Reward): Promise<void> {

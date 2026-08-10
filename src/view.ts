@@ -107,9 +107,6 @@ export class MilleFeuilleView extends ItemView {
     this.stat(statRow, String(stats.critCount), "crits");
     if (stats.gachaClaims > 0) this.stat(statRow, String(stats.gachaClaims), "gacha wins"); // §V41 separate from paid claims
 
-    // §V42 gacha section at top of shop, before the queue.
-    this.renderGacha(root);
-
     const rewards = p.rewards;
     const queue = rewards.filter((r) => openCount(r) > 0)
       .sort((a, b) => (oldestOpenAgeDays(b, today()) ?? 0) - (oldestOpenAgeDays(a, today()) ?? 0));
@@ -124,6 +121,9 @@ export class MilleFeuilleView extends ItemView {
     } else {
       for (const r of queue) this.queueCard(root, r, stale);
     }
+
+    // §V42 gacha section between the queue and the shop.
+    this.renderGacha(root);
 
     // shop
     const shopSec = this.section(root, "Shop", null);
@@ -325,9 +325,9 @@ export class MilleFeuilleView extends ItemView {
 
   private async doRoll(stage: HTMLElement, box: HTMLElement): Promise<void> {
     if (this.gachaAnimating) return;
+    this.gachaAnimating = true; // §V43 lock BEFORE await — double-click reentry guard
     const res = await this.plugin.roll();
-    if (!res.ok) return; // button was guarded; nothing to do
-    this.gachaAnimating = true;
+    if (!res.ok) { this.gachaAnimating = false; return; } // release on denial
     const rm = reducedMotion();
     const o = res.outcome;
     const value = o.value ?? 0;

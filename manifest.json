@@ -1,7 +1,7 @@
 {
   "id": "mille-feuille",
   "name": "Mille Feuille",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "minAppVersion": "1.5.0",
   "description": "Pay chips for completing tasks — base + crit gacha, Fibonacci milestones, a chip shop of registered rewards, and a two-state Purchased→Claimed reward flow.",
   "author": "Lyth",
