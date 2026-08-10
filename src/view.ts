@@ -340,33 +340,48 @@ export class MilleFeuilleView extends ItemView {
         big: "🎁", msg: "No rewards, huh? LOL too bad 🤣",
         hint: "Every reward is sold out or at capacity — nothing to grant.", win: false,
       };
-      this.commitReveal(stage, rm, "mf-anim-fade");
+      this.commitReveal(stage, box, rm, "mf-anim-fade", null); // no confetti on a dud
       return;
     }
 
     if (o.type === "nothing") {
       this.gachaReveal = { big: "🫠", msg: pick(NOTHING_TEXT), win: false };
-      this.commitReveal(stage, rm, "mf-anim-wobble");
+      this.commitReveal(stage, box, rm, "mf-anim-wobble", null);
     } else if (o.type === "rebate_small") {
       this.gachaReveal = { big: "🪙", msg: `+${fmt(value)} chips! 🪙`, win: true };
-      this.commitReveal(stage, rm, "mf-anim-bounce");
+      this.commitReveal(stage, box, rm, "mf-anim-bounce", { emojis: ["🪙"], n: 6 });
     } else {
       this.gachaReveal = { big: "🪙", msg: `+${fmt(value)} chips!! 🎉`, win: true };
-      this.commitReveal(stage, rm, "mf-anim-pop");
+      this.commitReveal(stage, box, rm, "mf-anim-pop", { emojis: ["🪙", "✨", "🎉"], n: 14 }); // coin shower
     }
   }
 
-  /** Shake → paint result → unlock + full render. Reduced motion skips the shake. §V44,§V47 */
-  private commitReveal(stage: HTMLElement, rm: boolean, anim: string): void {
+  /** Shake → paint result → burst → unlock + full render. Reduced motion skips it all. §V44,§V47 */
+  private commitReveal(stage: HTMLElement, box: HTMLElement, rm: boolean, anim: string, particles: { emojis: string[]; n: number } | null): void {
     const done = () => { this.gachaAnimating = false; this.render(); };
-    if (rm) { this.paintStage(stage); done(); return; }
+    if (rm) { this.paintStage(stage); done(); return; } // §V47 no shake, no burst
     stage.addClass("mf-shaking");
     window.setTimeout(() => {
       stage.removeClass("mf-shaking");
       this.paintStage(stage);
       stage.addClass(anim);
+      if (particles) this.burst(box, particles.emojis, particles.n);
       window.setTimeout(done, 450);
     }, 300);
+  }
+
+  /** Fling emoji particles out from the reveal centre. Self-cleaning. §V44 (CSS + emoji only). */
+  private burst(box: HTMLElement, emojis: string[], n: number): void {
+    for (let i = 0; i < n; i++) {
+      const p = box.createDiv({ cls: "mf-particle", text: pick(emojis) });
+      const ang = Math.random() * Math.PI * 2, dist = 60 + Math.random() * 70;
+      p.style.setProperty("--dx", `${Math.cos(ang) * dist}px`);
+      p.style.setProperty("--dy", `${Math.sin(ang) * dist - 30}px`);
+      p.style.setProperty("--rot", `${Math.random() * 720 - 360}deg`);
+      p.style.setProperty("--dur", `${0.7 + Math.random() * 0.5}s`);
+      p.style.marginLeft = `${Math.random() * 20 - 10}px`;
+      window.setTimeout(() => p.remove(), 1300);
+    }
   }
 
   /** §V45 short non-blocking overlay, then the picker. Not the banned ConfirmModal. */
@@ -375,6 +390,7 @@ export class MilleFeuilleView extends ItemView {
     ov.createDiv({ cls: "mf-jp-big" + (rm ? "" : " mf-anim-pop"), text: "🎁" });
     ov.createDiv({ cls: "mf-jp-h", text: "JACKPOT! 🎉" });
     ov.createDiv({ cls: "mf-jp-sub", text: "Pick your reward!" });
+    if (!rm) this.burst(box, ["🎉", "✨", "🎊", "⭐"], 22); // §V44 full centred celebration
     let done = false;
     const go = () => {
       if (done) return; done = true;

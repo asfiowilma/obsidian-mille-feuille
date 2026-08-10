@@ -174,8 +174,13 @@
 .mf-pick-card:hover { border-color: color-mix(in srgb, var(--mf-chip) 55%, var(--background-modifier-border)); }
 .mf-pick-card:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: 2px; }
 
+/* particle bursts — flung from the reveal centre (§V44); only rendered under no-preference below */
+.mf-particle { display: none; }
+
 /* motion only when the user allows it (§V47) */
 @media (prefers-reduced-motion: no-preference) {
+  .mf-particle { display: block; position: absolute; top: 44%; left: 50%; font-size: 18px; pointer-events: none; will-change: transform, opacity; z-index: 6; animation: mf-fly var(--dur) ease-out forwards; }
+  @keyframes mf-fly { to { transform: translate(var(--dx), var(--dy)) rotate(var(--rot)); opacity: 0; } }
   @keyframes mf-shake { 10%,90%{transform:translateX(-2px)} 20%,80%{transform:translateX(3px)} 30%,50%,70%{transform:translateX(-5px)} 40%,60%{transform:translateX(5px)} }
   @keyframes mf-pop { 0%{transform:scale(.3);opacity:0} 70%{transform:scale(1.15)} 100%{transform:scale(1);opacity:1} }
   @keyframes mf-bounce { 0%{transform:translateY(0)} 30%{transform:translateY(-14px)} 55%{transform:translateY(0)} 72%{transform:translateY(-6px)} 100%{transform:translateY(0)} }
