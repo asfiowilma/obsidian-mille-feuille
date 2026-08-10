@@ -1,6 +1,6 @@
 {
   "name": "mille-feuille",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Obsidian task-reward plugin (chips, crit gacha, milestones, reward shop).",
   "type": "module",
   "scripts": {

@@ -143,7 +143,11 @@
 .mf-field textarea { width: 100%; font: inherit; font-size: 13px; padding: 8px 10px; border-radius: 7px; background: var(--background-modifier-form-field); color: var(--text-normal); border: 1px solid var(--background-modifier-border); resize: vertical; }
 .mf-field textarea:focus { border-color: var(--interactive-accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--interactive-accent) 22%, transparent); }
 
-/* ---- gacha section (§V42,§V43) ---- */
+/* ---- gacha section (§V42,§V43,§V52) ---- */
+.mf-gacha-sum { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 18px 2px 8px; cursor: pointer; list-style: none; }
+.mf-gacha-sum::-webkit-details-marker { display: none; }
+.mf-gacha-sum .mf-sec-h::before { content: "▾ "; display: inline-block; transition: transform .15s; }
+.mf-gacha-sec:not([open]) .mf-sec-h::before { transform: rotate(-90deg); }
 .mf-gacha-rolls { font-size: 11px; font-weight: 600; font-family: var(--mf-mono); color: var(--text-muted); }
 .mf-gacha-rolls.low { color: var(--mf-error); }
 .mf-gacha { border: 1px solid var(--background-modifier-border); border-radius: 10px; background: var(--background-secondary); padding: 14px; position: relative; overflow: hidden; }

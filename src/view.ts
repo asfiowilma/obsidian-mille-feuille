@@ -282,10 +282,14 @@ export class MilleFeuilleView extends ItemView {
     const limited = g.maxRollsPerDay > 0;
     const capped = limited && rolls >= g.maxRollsPerDay;
 
-    const head = this.section(root, "🎰 Gacha", null);
+    // §V52 collapsible: closed by default only when no rolls left today; open otherwise (incl. broke).
+    const det = root.createEl("details", { cls: "mf-gacha-sec" });
+    det.open = !capped;
+    const head = det.createEl("summary", { cls: "mf-gacha-sum" });
+    head.createSpan({ cls: "mf-sec-h", text: "🎰 Gacha" });
     if (limited) head.createSpan({ cls: "mf-gacha-rolls" + (capped ? " low" : ""), text: `${rolls}/${g.maxRollsPerDay} today` });
 
-    const box = root.createDiv({ cls: "mf-gacha" });
+    const box = det.createDiv({ cls: "mf-gacha" });
     const stage = box.createDiv({ cls: "mf-gacha-stage" });
     this.paintStage(stage);
 
