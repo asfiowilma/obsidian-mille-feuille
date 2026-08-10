@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, Modal, App, Menu } from "obsidian";
+import { ItemView, WorkspaceLeaf, Modal, App, Menu, setTooltip } from "obsidian";
 import type MilleFeuillePlugin from "./main.js";
 import type { Reward } from "./rewards.js";
 import {
@@ -141,13 +141,16 @@ export class MilleFeuilleView extends ItemView {
       }
     }
 
-    // ledger — transaction log (spend + claim, incl gacha), newest first §V
+    // ledger — this month's transaction log (spend + claim, incl gacha), newest first §V
     this.section(root, "Ledger", null);
-    const log = p.entries.filter((e): e is SpendEntry | ClaimEntry => e.kind === "spend" || e.kind === "claim");
+    const month = today().slice(0, 7);
+    const all = p.entries.filter((e): e is SpendEntry | ClaimEntry => e.kind === "spend" || e.kind === "claim");
+    const log = all.filter((e) => e.date.startsWith(month));
     if (!log.length) {
-      root.createDiv({ cls: "mf-empty-q", text: "No purchases yet." });
+      root.createDiv({ cls: "mf-empty-q", text: "No purchases this month." });
     } else {
       for (let i = log.length - 1; i >= 0; i--) this.ledgerRow(root, log[i]);
+      if (all.length > log.length) root.createDiv({ cls: "mf-ledger-more", text: "Older entries hidden" });
     }
   }
 
@@ -213,15 +216,13 @@ export class MilleFeuilleView extends ItemView {
 
   private shopCard(root: HTMLElement, r: Reward, bal: number): void {
     const card = root.createDiv({ cls: "mf-card" + (hasThumbSlot(r) ? " has-thumb" : "") });
-    if (r.desc) card.setAttr("title", r.desc); // §V full desc on hover, no inline (fixed card height)
     thumbEl(card, r);
     const body = card.createDiv({ cls: "mf-card-body" });
-    const top = body.createDiv({ cls: "mf-top" });
-    const main = top.createDiv({ cls: "mf-top-main" });
-    main.createSpan({ cls: "mf-name", text: r.name });
+    this.cardActions(card, r); // §V absolute-cornered ⋯ menu, out of the content column
+    if (r.desc) setTooltip(card, r.desc); // §V styled Obsidian tooltip, not raw title attr
+    body.createSpan({ cls: "mf-name", text: r.name });
     const affordable = canBuy(r, bal);
-    if (!affordable) priceEl(main, r.price); // §V price shows here only when buy button is hidden
-    this.cardActions(top, r);
+    if (!affordable) priceEl(body, r.price); // §V price shows here only when buy button is hidden
 
     const link = (parent: HTMLElement) => {
       if (r.purchaseUrl) {
@@ -270,7 +271,7 @@ export class MilleFeuilleView extends ItemView {
     row.setAttr("title", e.date); // §V date only — no clock time is stored
     let label: string, amt = "", amtCls = "";
     if (e.kind === "claim") {
-      label = `Claimed: ${e.reward}`;
+      label = `Claimed ${e.reward}`;
     } else if (e.subtype === "gacha") {
       if (e.reward === undefined) { // roll
         label = "🎰 Gacha roll";
@@ -281,12 +282,12 @@ export class MilleFeuilleView extends ItemView {
         label = `🎁 Gacha win: ${e.reward}`;
       }
     } else { // purchase
-      label = e.reward ?? "Purchase";
+      label = `Purchased ${e.reward ?? ""}`.trimEnd();
       amt = fmt(e.chips ?? -(e.price ?? 0));
       amtCls = " neg";
     }
     row.createSpan({ cls: "mf-ln", text: label });
-    if (amt) row.createSpan({ cls: "mf-amt" + amtCls, text: amt });
+    if (amt) row.createSpan({ cls: "mf-amt" + amtCls, text: `${amt}🪙` });
   }
 
   // ---------------- GACHA (§V42-§V47) ----------------
