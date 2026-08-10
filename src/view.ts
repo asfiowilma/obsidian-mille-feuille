@@ -331,8 +331,6 @@ export class MilleFeuilleView extends ItemView {
     else hint.setText(" ");
     if (this.gachaAnimating) btn.disabled = true; // §V43 locked during reveal
     btn.onclick = () => void this.doRoll(stage, box);
-
-    root.createDiv({ cls: "mf-gacha-div" }); // §V42 divider above reward list
   }
 
   private paintStage(stage: HTMLElement): void {
