@@ -1,11 +1,12 @@
-import { ItemView, WorkspaceLeaf, Modal, App } from "obsidian";
+import { ItemView, WorkspaceLeaf, Modal, App, Menu } from "obsidian";
 import type MilleFeuillePlugin from "./main.js";
 import type { Reward } from "./rewards.js";
 import {
-  openCount, remaining, canBuy, isSoldOut, isStale, oldestOpenAgeDays, slug,
+  openCount, remaining, canBuy, isStale, oldestOpenAgeDays, slug,
   hasCapacity, isSingleEmoji,
 } from "./rewards.js";
 import { aggregate } from "./ledger.js";
+import type { SpendEntry, ClaimEntry } from "./ledger.js";
 import { gachaActive, todayRollCount } from "./gacha.js";
 
 export const MILLE_VIEW = "mille-feuille-view";
@@ -61,7 +62,7 @@ export class MilleFeuilleView extends ItemView {
   private form = blankForm();
   private editing: Reward | null = null;
   private shopQuery = "";
-  private shopSort: ShopSort = "name";
+  private shopSort: ShopSort = "price-high";
   private shopAffordable = false;
   private gachaReveal: GachaReveal | null = null;
   private gachaAnimating = false;
@@ -110,8 +111,7 @@ export class MilleFeuilleView extends ItemView {
     const rewards = p.rewards;
     const queue = rewards.filter((r) => openCount(r) > 0)
       .sort((a, b) => (oldestOpenAgeDays(b, today()) ?? 0) - (oldestOpenAgeDays(a, today()) ?? 0));
-    const shop = rewards.filter((r) => openCount(r) === 0 && !isSoldOut(r));
-    const activity = rewards.filter((r) => r.purchasedCount > 0 || r.claimedCount > 0);
+    const shop = rewards.filter((r) => hasCapacity(r)); // §V servings-left stays in shop, even while queued
     const staleCount = rewards.filter((r) => isStale(r, today(), stale)).length;
 
     // waiting to claim
@@ -141,12 +141,13 @@ export class MilleFeuilleView extends ItemView {
       }
     }
 
-    // ledger
+    // ledger — transaction log (spend + claim, incl gacha), newest first §V
     this.section(root, "Ledger", null);
-    if (!activity.length) {
+    const log = p.entries.filter((e): e is SpendEntry | ClaimEntry => e.kind === "spend" || e.kind === "claim");
+    if (!log.length) {
       root.createDiv({ cls: "mf-empty-q", text: "No purchases yet." });
     } else {
-      for (const r of activity) this.ledgerRow(root, r, stale);
+      for (let i = log.length - 1; i >= 0; i--) this.ledgerRow(root, log[i]);
     }
   }
 
@@ -199,7 +200,6 @@ export class MilleFeuilleView extends ItemView {
     const main = top.createDiv({ cls: "mf-top-main" });
     main.createSpan({ cls: "mf-name", text: r.name });
     priceEl(main, r.price);
-    this.cardActions(top, r);
     descEl(body, r);
     const age = oldestOpenAgeDays(r, today());
     if (isStale(r, today(), staleAfter) && age !== null) {
@@ -213,14 +213,15 @@ export class MilleFeuilleView extends ItemView {
 
   private shopCard(root: HTMLElement, r: Reward, bal: number): void {
     const card = root.createDiv({ cls: "mf-card" + (hasThumbSlot(r) ? " has-thumb" : "") });
+    if (r.desc) card.setAttr("title", r.desc); // §V full desc on hover, no inline (fixed card height)
     thumbEl(card, r);
     const body = card.createDiv({ cls: "mf-card-body" });
     const top = body.createDiv({ cls: "mf-top" });
     const main = top.createDiv({ cls: "mf-top-main" });
     main.createSpan({ cls: "mf-name", text: r.name });
-    priceEl(main, r.price);
+    const affordable = canBuy(r, bal);
+    if (!affordable) priceEl(main, r.price); // §V price shows here only when buy button is hidden
     this.cardActions(top, r);
-    descEl(body, r);
 
     const link = (parent: HTMLElement) => {
       if (r.purchaseUrl) {
@@ -230,10 +231,9 @@ export class MilleFeuilleView extends ItemView {
       }
     };
 
-    if (canBuy(r, bal)) {
+    if (affordable) {
       body.createDiv({ cls: "mf-counts", text: countsLine(r) });
       const foot = body.createDiv({ cls: "mf-foot" });
-      foot.createSpan({ cls: "mf-badge avail", text: "✓ Available" });
       const right = foot.createDiv({ cls: "mf-foot-right" });
       link(right);
       const buy = right.createEl("button", { cls: "mf-btn btn-buy", text: `🪙 ${fmt(r.price)}` });
@@ -253,23 +253,40 @@ export class MilleFeuilleView extends ItemView {
 
   private cardActions(parent: HTMLElement, r: Reward): void {
     const acts = parent.createDiv({ cls: "mf-card-acts" });
-    const edit = acts.createEl("button", { cls: "mf-icon-btn", text: "✎" });
-    edit.setAttr("aria-label", `Edit ${r.name}`);
-    edit.onclick = () => { this.editing = r; this.form = formFrom(r); this.screen = "add"; this.render(); };
-    const del = acts.createEl("button", { cls: "mf-icon-btn danger", text: "🗑" });
-    del.setAttr("aria-label", `Delete ${r.name}`);
-    del.onclick = () => new ConfirmModal(this.app, r.name, () => void this.plugin.removeReward(r)).open();
+    const btn = acts.createEl("button", { cls: "mf-icon-btn", text: "⋯" });
+    btn.setAttr("aria-label", `Actions for ${r.name}`);
+    btn.onclick = (ev) => {
+      const menu = new Menu();
+      menu.addItem((i) => i.setTitle("Edit").setIcon("pencil")
+        .onClick(() => { this.editing = r; this.form = formFrom(r); this.screen = "add"; this.render(); }));
+      menu.addItem((i) => i.setTitle("Delete").setIcon("trash").setWarning(true)
+        .onClick(() => new ConfirmModal(this.app, r.name, () => void this.plugin.removeReward(r)).open()));
+      menu.showAtMouseEvent(ev);
+    };
   }
 
-  private ledgerRow(root: HTMLElement, r: Reward, staleAfter: number): void {
+  private ledgerRow(root: HTMLElement, e: SpendEntry | ClaimEntry): void {
     const row = root.createDiv({ cls: "mf-ledger-row" });
-    row.createSpan({ cls: "mf-ln", text: r.name });
-    const stale = isStale(r, today(), staleAfter);
-    let badgeCls = "claim", badgeText = "Claimed", line = countsLine(r);
-    if (isSoldOut(r)) { badgeCls = "sold"; badgeText = "Sold out"; }
-    else if (openCount(r) > 0) { badgeCls = "purch"; badgeText = "Purchased"; line = `${line} · oldest ${oldestOpenAgeDays(r, today())}d`; }
-    row.createSpan({ cls: `mf-badge ${badgeCls}`, text: badgeText });
-    row.createSpan({ cls: "mf-lc" + (stale ? " st" : ""), text: (stale ? "⚠ " : "") + line });
+    row.setAttr("title", e.date); // §V date only — no clock time is stored
+    let label: string, amt = "", amtCls = "";
+    if (e.kind === "claim") {
+      label = `Claimed: ${e.reward}`;
+    } else if (e.subtype === "gacha") {
+      if (e.reward === undefined) { // roll
+        label = "🎰 Gacha roll";
+        const c = e.chips ?? 0;
+        amt = c >= 0 ? `+${fmt(c)}` : fmt(c);
+        amtCls = c >= 0 ? " pos" : " neg";
+      } else { // free-reward win marker
+        label = `🎁 Gacha win: ${e.reward}`;
+      }
+    } else { // purchase
+      label = e.reward ?? "Purchase";
+      amt = fmt(e.chips ?? -(e.price ?? 0));
+      amtCls = " neg";
+    }
+    row.createSpan({ cls: "mf-ln", text: label });
+    if (amt) row.createSpan({ cls: "mf-amt" + amtCls, text: amt });
   }
 
   // ---------------- GACHA (§V42-§V47) ----------------
