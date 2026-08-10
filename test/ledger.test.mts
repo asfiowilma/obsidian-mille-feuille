@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  balance, isCredited, frozenChips, aggregate, type LedgerEntry,
+  balance, isCredited, frozenChips, aggregate, missingClosedMonths, type LedgerEntry,
 } from "../src/ledger.js";
 
 const credit = (key: string, chips: number, extra: Partial<LedgerEntry> = {}): LedgerEntry =>
@@ -61,4 +61,25 @@ test("aggregate rolls month from ledger only (V16)", () => {
   assert.equal(a.reversals, 1);
   // July credit excluded
   assert.equal(a.chipsByTier.base, 10); // only August 'a' credit counted under base
+});
+
+test("missingClosedMonths: closed months with credits and no aggregate, oldest-first (V33)", () => {
+  const e: LedgerEntry[] = [
+    credit("a", 10, { date: "2026-06-02" } as Partial<LedgerEntry>),
+    credit("b", 10, { date: "2026-07-05" } as Partial<LedgerEntry>),
+    credit("c", 10, { date: "2026-08-01" } as Partial<LedgerEntry>), // current month, skip
+    { kind: "spend", date: "2026-05-01", reward: "X", price: 5 }, // no credit that month, skip
+  ];
+  assert.deepEqual(missingClosedMonths(e, ["2026-06"], "2026-08"), ["2026-07"]); // June has agg, Aug open, May no credit
+  assert.deepEqual(missingClosedMonths(e, [], "2026-08"), ["2026-06", "2026-07"]);
+});
+
+test("rescan idempotency: re-crediting an already-credited key never double-credits (V32,V13)", () => {
+  const e: LedgerEntry[] = [credit("task:file:x", 10)];
+  // rescan re-reads same [x] line; isCredited true → decideAction would return "none"
+  assert.equal(isCredited(e, "task:file:x"), true);
+  // reversed key stays reversed on rescan (line now unchecked → none, balance unchanged)
+  e.push({ kind: "reversal", date: "2026-08-09", reversalOf: "task:file:x", chips: -10 });
+  assert.equal(isCredited(e, "task:file:x"), false);
+  assert.equal(balance(e), 0);
 });

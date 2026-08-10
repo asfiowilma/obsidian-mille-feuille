@@ -4,6 +4,7 @@ import type { Reward } from "./rewards.js";
 import {
   openCount, remaining, canBuy, isSoldOut, isStale, oldestOpenAgeDays, slug,
 } from "./rewards.js";
+import { aggregate } from "./ledger.js";
 
 export const MILLE_VIEW = "mille-feuille-view";
 
@@ -75,6 +76,14 @@ export class MilleFeuilleView extends ItemView {
     grow.createSpan({ cls: "mf-amt", text: fmt(bal) });
     grow.createSpan({ cls: "mf-cap", text: bal === 0 ? "No chips yet. Finish a task to earn some." : "chips banked" });
 
+    // §V34 current-month stats, read live from ledger
+    const stats = aggregate(p.entries, today().slice(0, 7));
+    const earned = Object.values(stats.chipsBySource).reduce((a, b) => a + b, 0);
+    const statRow = root.createDiv({ cls: "mf-stats" });
+    this.stat(statRow, fmt(earned), "earned this month");
+    this.stat(statRow, String(stats.claimed), "claimed");
+    this.stat(statRow, String(stats.critCount), "crits");
+
     const rewards = p.rewards;
     const queue = rewards.filter((r) => openCount(r) > 0)
       .sort((a, b) => (oldestOpenAgeDays(b, today()) ?? 0) - (oldestOpenAgeDays(a, today()) ?? 0));
@@ -141,6 +150,12 @@ export class MilleFeuilleView extends ItemView {
 
     const aff = bar.createEl("button", { cls: "mf-lnk" + (this.shopAffordable ? " on" : ""), text: this.shopAffordable ? "✓ Affordable" : "Affordable" });
     aff.onclick = () => { this.shopAffordable = !this.shopAffordable; this.render(); };
+  }
+
+  private stat(parent: HTMLElement, value: string, label: string): void {
+    const s = parent.createDiv({ cls: "mf-stat" });
+    s.createSpan({ cls: "mf-stat-v", text: value });
+    s.createSpan({ cls: "mf-stat-l", text: label });
   }
 
   private section(root: HTMLElement, title: string, pill: string | null): HTMLElement {

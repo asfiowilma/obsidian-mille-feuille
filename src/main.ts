@@ -10,6 +10,7 @@ import {
   isCredited,
   frozenChips,
   aggregate,
+  missingClosedMonths,
   type LedgerEntry,
   type CreditEntry,
 } from "./ledger.js";
@@ -44,10 +45,12 @@ export default class MilleFeuillePlugin extends Plugin {
     this.addRibbonIcon("cookie", "Open mille-feuille", () => this.activateView());
     this.addCommand({ id: "open-mille-feuille", name: "Open panel", callback: () => this.activateView() });
     this.addCommand({ id: "roll-monthly", name: "Roll monthly review", callback: () => this.rollMonthly() });
+    this.addCommand({ id: "rescan-vault", name: "Rescan vault for completed tasks", callback: () => this.rescanAll() });
 
     this.app.workspace.onLayoutReady(async () => {
       await this.store.ensureLayout();
       await this.reload();
+      await this.autoRollMonths(); // §V33 backfill missing closed-month aggregates, silent
       this.afford.seed(this.rewards, this.balance());
       // Scan on file change; §V1 credits on transition to done, ledger-driven idempotency.
       this.registerEvent(this.app.vault.on("modify", (f) => this.onFileChanged(f)));
@@ -101,8 +104,9 @@ export default class MilleFeuillePlugin extends Plugin {
     }
   }
 
-  /** Parse one line, decide credit/reverse vs the ledger, apply. Returns true if it moved chips. */
-  private async reconcileLine(path: string, raw: string): Promise<boolean> {
+  /** Parse one line, decide credit/reverse vs the ledger, apply. Returns true if it moved chips.
+   *  quiet (§V32 rescan): suppress per-line toasts + crit-streak so backfill stays silent. */
+  private async reconcileLine(path: string, raw: string, quiet = false): Promise<boolean> {
     const p = parseLine(raw);
     if (!p) return false;
     const hk = habitKey(p.text);
@@ -125,14 +129,16 @@ export default class MilleFeuillePlugin extends Plugin {
       };
       this.entries.push(entry);
       await this.store.appendLedger(entry);
-      const m = this.settings.messages;
-      const critText = pay.crit ? renderMsg(m, "critSuffix", {}) : "";
-      if (firstEver) notify(renderMsg(m, "firstChip", {}));
-      notify(cls.source === "milestone"
-        ? renderMsg(m, "milestone", { chips: pay.chips, crit: critText, tier: cls.tier ?? "" })
-        : renderMsg(m, "mint", { chips: pay.chips, crit: critText }));
-      const streak = this.streak.onCredit(!!pay.crit);
-      if (streak !== null) notify(critStreakCopy(m, streak));
+      if (!quiet) {
+        const m = this.settings.messages;
+        const critText = pay.crit ? renderMsg(m, "critSuffix", {}) : "";
+        if (firstEver) notify(renderMsg(m, "firstChip", {}));
+        notify(cls.source === "milestone"
+          ? renderMsg(m, "milestone", { chips: pay.chips, crit: critText, tier: cls.tier ?? "" })
+          : renderMsg(m, "mint", { chips: pay.chips, crit: critText }));
+        const streak = this.streak.onCredit(!!pay.crit);
+        if (streak !== null) notify(critStreakCopy(m, streak));
+      }
       return true;
     }
 
@@ -142,8 +148,10 @@ export default class MilleFeuillePlugin extends Plugin {
     const rev: LedgerEntry = { kind: "reversal", date: today(), reversalOf: key, chips: -frozen.chips };
     this.entries.push(rev);
     await this.store.appendLedger(rev);
-    notify(renderMsg(this.settings.messages, "refund", { chips: frozen.chips }));
-    this.streak.onCredit(false); // uncheck breaks streak
+    if (!quiet) {
+      notify(renderMsg(this.settings.messages, "refund", { chips: frozen.chips }));
+      this.streak.onCredit(false); // uncheck breaks streak
+    }
     return true;
   }
 
@@ -208,6 +216,35 @@ export default class MilleFeuillePlugin extends Plugin {
     this.rewards = this.rewards.filter((x) => x.name !== r.name);
     notify(renderMsg(this.settings.messages, "deleted", { name: r.name }));
     this.refreshViews();
+  }
+
+  /** §V32: walk every in-scope md file through reconcileLine (quiet). Idempotent backfill. */
+  async rescanAll(): Promise<void> {
+    const before = this.balance();
+    const scope = { include: this.settings.scanInclude, exclude: this.settings.scanExclude, base: this.settings.baseFolder };
+    let moved = 0;
+    for (const f of this.app.vault.getMarkdownFiles()) {
+      if (!inScanScope(f.path, scope)) continue;
+      const content = await this.app.vault.read(f);
+      for (const raw of content.split("\n")) {
+        if (await this.reconcileLine(f.path, raw, true)) moved++;
+      }
+    }
+    if (moved) {
+      await this.store.writeWalletCache(this.balance());
+      this.afford.seed(this.rewards, this.balance()); // reseed baseline silently, no afford spam
+      this.refreshViews();
+    }
+    const gained = this.balance() - before;
+    notify(`Rescan done: ${moved} task${moved === 1 ? "" : "s"} reconciled, ${gained >= 0 ? "+" : ""}${gained}🪙`);
+  }
+
+  /** §V33: on load, roll any closed month that has credits but no aggregate yet. Silent. */
+  private async autoRollMonths(): Promise<void> {
+    const have = (await this.store.readAggregates()).map((a) => a.month);
+    for (const m of missingClosedMonths(this.entries, have, today().slice(0, 7))) {
+      await this.store.writeAggregate(aggregate(this.entries, m));
+    }
   }
 
   async rollMonthly(): Promise<void> {

@@ -121,6 +121,9 @@ V28: affordability toast fires once on upward crossing `balance` `<price → ≥
 V29: crit streak — track consecutive crit count across ALL credit sources (task/subtask/milestone/habit; milestone crits count). Streak reaches 2 → toast `Double crit! 🔥`; each further consecutive crit → `Crit streak x<k>! 🔥`. Non-crit credit resets streak to 0. Streak toast in addition to mint/milestone toast.
 V30: scan scope — settings `scanInclude` (folder prefixes, empty = whole vault) & `scanExclude` (prefixes). Line creditable iff file `inScanScope`: base folder always excluded, exclude beats include, prefix match at path boundary (⊥ substring). Own data folder never scanned.
 V31: toast copy from editable templates in settings (`messages`), not hardcoded. `{{key}}` → context value; absent key → empty string (⊥ literal `{{…}}`); braces tolerate inner whitespace; plain-text sub, no logic. `{{crit}}` = `critSuffix` template when crit fired else empty. `claim` = list of templates, uniform random pick, add/edit/delete in settings (⊥ reorder — order cosmetic under random pick); empty list → default list. Blank message → default (toast ⊥ blank). Per-message reset-to-default. Templating changes copy only — ⊥ alter when toast fires, variable values, or economy; editing ⊥ credit chips. Per-event vars per design-spec Req 16 table.
+V32: rescan command "Rescan vault for completed tasks" → walk ∀ in-scope md file (§V30 scope) thru `reconcileLine`. Idempotent vs ledger (`isCredited`) — no re-credit, no crit re-roll (V13). Backfills credits missed while plugin off. Already-reversed key stays reversed (⊥ re-credit). Run `afterCredit` once at end iff any moved chips.
+V33: auto monthly roll on load — `onLayoutReady`, ∀ closed month (< current `YYYY-MM`) w/ ≥1 credit ledger entry & ⊥ existing aggregate row → roll it (V16), oldest-first. Current (open) month ⊥ rolled. ⊥ duplicate existing aggregate rows. Manual `roll-monthly` command stays. Monthly toast (V27) ⊥ fire on auto-roll (silent backfill).
+V34: panel shows current-month stats row, read FROM ledger (V16 `aggregate` over `today().slice(0,7)`), ⊥ from reward notes. Shows chips earned this month, claimed count, crit count. Recomputed live on `refreshViews`, ⊥ persisted apart from ledger. Empty month → zeros, row ⊥ hidden.
 
 ## §T
 
@@ -146,6 +149,9 @@ T18|x|affordability-crossing toast, once per upward cross, debounced|V28
 T19|x|crit-streak tracking + Double crit!/streak toast|V29
 T20|x|scan scope filter: include/exclude folders in settings|V30,I.config
 T21|x|editable toast templates {{var}} + claim-list CRUD + reset-to-default|V31,I.config
+T22|x|rescan-vault command: walk in-scope files thru reconcileLine, idempotent backfill|V32,V30,V13,I.cmd
+T23|x|auto monthly roll on load for missing closed months, silent|V33,V16
+T24|x|panel current-month stats row from ledger aggregate|V34,V16
 
 ## §B
 

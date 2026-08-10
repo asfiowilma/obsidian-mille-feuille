@@ -66,6 +66,18 @@ export interface MonthlyAggregate {
   reversals: number;
 }
 
+/** Closed months (< current) holding ≥1 credit but no aggregate yet, oldest-first. §V33 */
+export function missingClosedMonths(entries: LedgerEntry[], haveMonths: string[], currentMonth: string): string[] {
+  const have = new Set(haveMonths);
+  const months = new Set<string>();
+  for (const e of entries) {
+    if (e.kind !== "credit") continue;
+    const m = e.date.slice(0, 7);
+    if (m < currentMonth && !have.has(m)) months.add(m);
+  }
+  return [...months].sort();
+}
+
 /** Roll a month's ledger into one permanent aggregate record. From ledger only. §V16 */
 export function aggregate(entries: LedgerEntry[], month: string): MonthlyAggregate {
   const inMonth = entries.filter((e) => e.date.startsWith(month));
