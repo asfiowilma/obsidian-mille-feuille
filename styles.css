@@ -57,6 +57,7 @@
 .mf-price .u { font-size: 9.5px; color: var(--text-muted); font-weight: 500; margin-left: 2px; }
 .mf-counts { font-size: 10.5px; color: var(--text-muted); }
 .mf-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.mf-foot.end { justify-content: flex-end; }
 .mf-foot-right { display: flex; gap: 10px; align-items: center; }
 .mf-card.claim { opacity: .6; }
 

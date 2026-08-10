@@ -234,7 +234,7 @@ export class MilleFeuilleView extends ItemView {
 
     if (affordable) {
       body.createDiv({ cls: "mf-counts", text: countsLine(r) });
-      const foot = body.createDiv({ cls: "mf-foot" });
+      const foot = body.createDiv({ cls: "mf-foot end" });
       const right = foot.createDiv({ cls: "mf-foot-right" });
       link(right);
       const buy = right.createEl("button", { cls: "mf-btn btn-buy", text: `🪙 ${fmt(r.price)}` });
