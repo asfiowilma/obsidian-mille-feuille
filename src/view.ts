@@ -34,10 +34,15 @@ const formFrom = (r: Reward): FormState => ({
   thumb: r.thumbnail ?? "",
 });
 
+type ShopSort = "name" | "price-low" | "price-high";
+
 export class MilleFeuilleView extends ItemView {
   private screen: Screen = "home";
   private form = blankForm();
   private editing: Reward | null = null;
+  private shopQuery = "";
+  private shopSort: ShopSort = "name";
+  private shopAffordable = false;
 
   constructor(leaf: WorkspaceLeaf, private plugin: MilleFeuillePlugin) {
     super(leaf);
@@ -92,7 +97,13 @@ export class MilleFeuilleView extends ItemView {
     if (!shop.length) {
       root.createDiv({ cls: "mf-empty-q", text: "No rewards yet. Add one to start saving." });
     } else {
-      for (const r of shop) this.shopCard(root, r, bal);
+      this.shopToolbar(root);
+      const shown = this.filterSortShop(shop, bal);
+      if (!shown.length) {
+        root.createDiv({ cls: "mf-empty-q", text: "No rewards match your filters." });
+      } else {
+        for (const r of shown) this.shopCard(root, r, bal);
+      }
     }
 
     // ledger
@@ -102,6 +113,34 @@ export class MilleFeuilleView extends ItemView {
     } else {
       for (const r of activity) this.ledgerRow(root, r, stale);
     }
+  }
+
+  private filterSortShop(shop: Reward[], bal: number): Reward[] {
+    const q = this.shopQuery.trim().toLowerCase();
+    let out = shop.filter((r) =>
+      (!q || r.name.toLowerCase().includes(q)) &&
+      (!this.shopAffordable || canBuy(r, bal)));
+    if (this.shopSort === "name") out = out.sort((a, b) => a.name.localeCompare(b.name));
+    else if (this.shopSort === "price-low") out = out.sort((a, b) => a.price - b.price);
+    else out = out.sort((a, b) => b.price - a.price);
+    return out;
+  }
+
+  private shopToolbar(root: HTMLElement): void {
+    const bar = root.createDiv({ cls: "mf-shop-tools" });
+    const search = bar.createEl("input", { cls: "mf-shop-search", attr: { type: "search", placeholder: "Search rewards…" } });
+    search.value = this.shopQuery;
+    search.oninput = () => { this.shopQuery = search.value; this.render(); search.focus(); };
+
+    const sort = bar.createEl("select", { cls: "mf-shop-sort" });
+    for (const [v, label] of [["name", "Name"], ["price-low", "Price ↑"], ["price-high", "Price ↓"]] as [ShopSort, string][]) {
+      sort.createEl("option", { value: v, text: label });
+    }
+    sort.value = this.shopSort;
+    sort.onchange = () => { this.shopSort = sort.value as ShopSort; this.render(); };
+
+    const aff = bar.createEl("button", { cls: "mf-lnk" + (this.shopAffordable ? " on" : ""), text: this.shopAffordable ? "✓ Affordable" : "Affordable" });
+    aff.onclick = () => { this.shopAffordable = !this.shopAffordable; this.render(); };
   }
 
   private section(root: HTMLElement, title: string, pill: string | null): HTMLElement {
