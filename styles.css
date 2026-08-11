@@ -52,6 +52,7 @@
 /* cards — neutral borders; state = badge */
 .mf-card { position: relative; border: 1px solid var(--background-modifier-border); border-radius: 9px; padding: 9px 11px; background: var(--background-secondary); margin-bottom: 6px; display: flex; flex-direction: column; gap: 6px; }
 .mf-top { display: flex; align-items: flex-start; gap: 8px; }
+.mf-top-main { display: flex; align-items: flex-start; gap: 8px; flex: 1; }
 .mf-name { font-size: 13px; font-weight: 600; flex: 1; line-height: 1.25; padding-right: 22px; }
 .mf-price { font-weight: 700; font-size: 13px; color: var(--mf-chip); white-space: nowrap; }
 .mf-price .u { font-size: 9.5px; color: var(--text-muted); font-weight: 500; margin-left: 2px; }

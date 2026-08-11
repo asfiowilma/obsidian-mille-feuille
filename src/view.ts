@@ -210,7 +210,9 @@ export class MilleFeuilleView extends ItemView {
     }
     const foot = body.createDiv({ cls: "mf-foot" });
     foot.createSpan({ cls: "mf-badge purch", text: `● ${openCount(r)} open` });
-    const btn = foot.createEl("button", { cls: "mf-btn btn-claim", text: openCount(r) > 1 ? "Claim oldest" : "Claim" });
+    const right = foot.createDiv({ cls: "mf-foot-right" });
+    itemLink(right, r);
+    const btn = right.createEl("button", { cls: "mf-btn btn-claim", text: openCount(r) > 1 ? "Claim oldest" : "Claim" });
     btn.onclick = () => this.plugin.claim(r);
   }
 
@@ -231,19 +233,11 @@ export class MilleFeuilleView extends ItemView {
     const affordable = canBuy(r, bal);
     if (!affordable) priceEl(body, r.price); // §V price shows here only when buy button is hidden
 
-    const link = (parent: HTMLElement) => {
-      if (r.purchaseUrl) {
-        const a = parent.createEl("a", { cls: "mf-itemlink", text: "View item ↗", href: r.purchaseUrl });
-        a.setAttr("target", "_blank");
-        a.setAttr("rel", "noopener");
-      }
-    };
-
     if (affordable) {
       body.createDiv({ cls: "mf-counts", text: countsLine(r) });
       const foot = body.createDiv({ cls: "mf-foot end" });
       const right = foot.createDiv({ cls: "mf-foot-right" });
-      link(right);
+      itemLink(right, r);
       const buy = right.createEl("button", { cls: "mf-btn btn-buy", text: `🪙 ${fmt(r.price)}` });
       buy.setAttr("aria-label", `Buy for ${fmt(r.price)} chips`);
       buy.onclick = () => this.plugin.buy(r);
@@ -254,7 +248,7 @@ export class MilleFeuilleView extends ItemView {
       const foot = body.createDiv({ cls: "mf-foot" });
       foot.createSpan({ cls: "mf-badge exp", text: "Too expensive" });
       const right = foot.createDiv({ cls: "mf-foot-right" });
-      link(right);
+      itemLink(right, r);
       right.createSpan({ cls: "mf-mono-mut", text: `${fmt(r.price - bal)} to go` });
     }
   }
@@ -614,6 +608,12 @@ function field(root: HTMLElement, label: string): HTMLElement {
   const wrap = root.createDiv({ cls: "mf-field" });
   wrap.createEl("label", { text: label });
   return wrap;
+}
+function itemLink(parent: HTMLElement, r: Reward): void {
+  if (!r.purchaseUrl) return;
+  const a = parent.createEl("a", { cls: "mf-itemlink", text: "View item ↗", href: r.purchaseUrl });
+  a.setAttr("target", "_blank");
+  a.setAttr("rel", "noopener");
 }
 function priceEl(parent: HTMLElement, price: number): void {
   const el = parent.createSpan({ cls: "mf-price", text: fmt(price) });
