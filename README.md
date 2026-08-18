@@ -16,6 +16,7 @@ Everything lives in your vault as plain notes. Zero network, no account, no paid
 - **Reward shop** — register rewards as vault notes (`price`, `servings`), browse and buy them with your chips.
 - **Purchased → Claimed flow** — a two-state reward lifecycle so a bought reward is redeemed deliberately, not the instant you pay.
 - **Repeatable rewards** — `servings` capacity: one-off, fixed N, or infinite.
+- **Gaming ledger** — log a match's raw stats (deaths, level, damage, points, Rayquaza, focus goal), and a threshold list scores it into chips. Batch a session into one task, tick it, get paid. Off by default.
 - **Editable toasts** — every notification is a `{{var}}` template you can rewrite in settings.
 - **Config-first economy** — the whole value curve is tunable from settings, no code changes.
 - **Desktop + Android** — works fully offline on both (iOS not supported).
