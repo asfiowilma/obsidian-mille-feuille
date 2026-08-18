@@ -6,6 +6,10 @@ import { deriveState, slug } from "./rewards.js";
 import type { LedgerEntry, MonthlyAggregate } from "./ledger.js";
 import { groupByMonth } from "./ledger.js";
 import { jsonBlock, parseJsonBlock, parseJsonBlockStrict } from "./jsonblock.js";
+import {
+  appendMatchRow, parseSessionNote, sessionNote, setFrontmatterField, insertTask,
+  type Match, type Session,
+} from "./gaming.js";
 
 export class VaultStore {
   constructor(private app: App, private base: () => string) {}
@@ -126,6 +130,69 @@ export class VaultStore {
       rows.sort((x, y) => x.month.localeCompare(y.month));
       await this.writeFile(path, jsonBlock("monthly aggregates", rows));
     });
+  }
+
+  // ---- gaming: match notes + the session task file (§I.file, §V59) ----
+  // Paths come from the caller: these files live in the user's vault, outside our base folder.
+
+  private async ensurePath(filePath: string): Promise<void> {
+    const dir = filePath.split("/").slice(0, -1).join("/");
+    if (dir) await this.ensureFolder(normalizePath(dir));
+  }
+
+  /** Every session in the gaming folder, newest-first, each with its unreadable-row count. §V75,§V79 */
+  async readSessions(folder: string): Promise<{ session: Session; unreadable: number }[]> {
+    const dir = normalizePath(folder);
+    const out: { session: Session; unreadable: number }[] = [];
+    for (const f of this.app.vault.getMarkdownFiles()) {
+      if (f.path !== dir && !f.path.startsWith(dir + "/")) continue;
+      const content = await this.app.vault.read(f);
+      const parsed = parseSessionNote(content, f.basename);
+      if (!/^type:\s*gaming-session\s*$/m.test(content)) continue; // plugin-owned notes only
+      out.push(parsed);
+    }
+    return out.sort((a, b) => b.session.id.localeCompare(a.session.id));
+  }
+
+  private sessionPath(folder: string, id: string): string {
+    return normalizePath(`${folder}/${id}.md`);
+  }
+
+  /** §V72: append one row, creating the note when absent. Never touches `processed`. */
+  async logMatch(folder: string, id: string, m: Match, focus?: string): Promise<void> {
+    const path = this.sessionPath(folder, id);
+    await this.ensurePath(path);
+    const existing = await this.readFile(path);
+    let content = existing ?? sessionNote(id, focus);
+    if (existing && focus) content = setFrontmatterField(content, "focus", focus); // §V76 once per session
+    await this.writeFile(path, appendMatchRow(content, m));
+  }
+
+  /** §V76: write the focus goal without logging a match (an empty goal still counts as answered). */
+  async writeFocus(folder: string, id: string, focus: string): Promise<void> {
+    const path = this.sessionPath(folder, id);
+    await this.ensurePath(path);
+    const content = (await this.readFile(path)) ?? sessionNote(id);
+    await this.writeFile(path, setFrontmatterField(content, "focus", focus));
+  }
+
+  /** §V63 step 3: raise `processed` to the match count of the note. Never lowered here (§V74). */
+  async setProcessed(folder: string, id: string, n: number): Promise<void> {
+    const path = this.sessionPath(folder, id);
+    const content = await this.readFile(path);
+    if (content === null) return;
+    await this.writeFile(path, setFrontmatterField(content, "processed", n));
+  }
+
+  async readTaskFile(taskFile: string): Promise<string> {
+    return (await this.readFile(normalizePath(taskFile))) ?? "";
+  }
+
+  /** §V63 step 2: put one batch task under `## Tasks`. The scan credits it when it is ticked. */
+  async appendTask(taskFile: string, block: string): Promise<void> {
+    const path = normalizePath(taskFile);
+    await this.ensurePath(path);
+    await this.writeFile(path, insertTask(await this.readTaskFile(taskFile), block));
   }
 
   // ---- wallet cache ----

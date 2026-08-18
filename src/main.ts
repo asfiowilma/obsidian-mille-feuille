@@ -19,7 +19,11 @@ import {
 import type { Reward } from "./rewards.js";
 import { isSoldOut, purchase, claim as claimReward, slug, hasCapacity, grantFree } from "./rewards.js";
 import { canRoll, rollOutcome, rollNet, type GachaOutcome, type RollDenial } from "./gacha.js";
-import { parseLine, habitKey, taskKeys, decideAction, inScanScope } from "./scan.js";
+import { parseLine, habitKey, taskKeys, decideAction, inScanScope, type ScanScope } from "./scan.js";
+import {
+  parseThresholds, parseBands, pendingOf, pendingChips, matchChips, countBatches, taskBlock,
+  scoreOf, type Match, type Session, type Threshold, type Band,
+} from "./gaming.js";
 import { CritStreak, AffordabilityTracker } from "./toasts.js";
 import { renderMsg, renderClaim, critStreakCopy } from "./messages.js";
 import { VaultStore } from "./store.js";
@@ -35,6 +39,8 @@ export default class MilleFeuillePlugin extends Plugin {
   store!: VaultStore;
   entries: LedgerEntry[] = [];
   rewards: Reward[] = [];
+  sessions: { session: Session; unreadable: number }[] = []; // §V79 newest-first, all ages
+  batchCounts: Record<string, number> = {}; // §V63 batches already written, per session id
   private streak = new CritStreak();
   private afford = new AffordabilityTracker();
   private rng: Rng = Math.random;
@@ -50,10 +56,15 @@ export default class MilleFeuillePlugin extends Plugin {
     this.addCommand({ id: "open-mille-feuille", name: "Open panel", callback: () => this.activateView() });
     this.addCommand({ id: "roll-monthly", name: "Roll monthly review", callback: () => this.rollMonthly() });
     this.addCommand({ id: "rescan-vault", name: "Rescan vault for completed tasks", callback: () => this.rescanAll() });
+    // §V58: registered always, but each one does nothing while the subsystem is off.
+    this.addCommand({ id: "gaming-log-match", name: "Log a match", callback: () => this.openMatchScreen() });
+    this.addCommand({ id: "gaming-process", name: "Process gaming session", callback: () => this.processAllSessions() });
+    this.addCommand({ id: "gaming-review", name: "Review session stats", callback: () => this.reviewSession() });
 
     this.app.workspace.onLayoutReady(async () => {
       await this.store.ensureLayout();
       await this.reload();
+      await this.reloadSessions();
       await this.autoRollMonths(); // §V33 backfill missing closed-month aggregates, silent
       this.afford.seed(this.rewards, this.balance());
       // Scan on file change; §V1 credits on transition to done, ledger-driven idempotency.
@@ -65,6 +76,118 @@ export default class MilleFeuillePlugin extends Plugin {
 
   balance(): number {
     return sumBalance(this.entries);
+  }
+
+  // ---- gaming (§V58-§V83) ----
+  // The curve is parsed on demand: the text is the source of truth, so a retune re-scores every
+  // pending match at the next read. §V59
+  thresholds(): Threshold[] {
+    return parseThresholds(this.settings.gaming.thresholds);
+  }
+  bands(): Band[] {
+    return parseBands(this.settings.gaming.bands);
+  }
+
+  /** §V30,§V65 — one scope for every scan path. The gaming folder can never be scanned. */
+  private scope(): ScanScope {
+    return {
+      include: this.settings.scanInclude,
+      exclude: this.settings.scanExclude,
+      base: this.settings.baseFolder,
+      gaming: this.settings.gaming.folder,
+    };
+  }
+
+  async reloadSessions(): Promise<void> {
+    const g = this.settings.gaming;
+    if (!g.enabled) { this.sessions = []; this.batchCounts = {}; return; } // §V58
+    this.sessions = await this.store.readSessions(g.folder);
+    const taskFile = await this.store.readTaskFile(g.taskFile);
+    this.batchCounts = {};
+    for (const { session } of this.sessions) this.batchCounts[session.id] = countBatches(taskFile, session.id);
+    this.refreshViews();
+  }
+
+  sessionOf(id: string): Session | null {
+    return this.sessions.find((s) => s.session.id === id)?.session ?? null;
+  }
+
+  today(): string {
+    return today();
+  }
+
+  /** §V72: append the row, leave `processed` alone. */
+  async logMatch(m: Match, focus?: string): Promise<void> {
+    const g = this.settings.gaming;
+    if (!g.enabled) return; // §V58
+    await this.store.logMatch(g.folder, today(), m, focus);
+    await this.reloadSessions();
+  }
+
+  /** §V76: answer the focus prompt once for a session (an empty answer still counts). */
+  async setFocus(id: string, focus: string): Promise<void> {
+    const g = this.settings.gaming;
+    if (!g.enabled) return;
+    await this.store.writeFocus(g.folder, id, focus);
+    await this.reloadSessions();
+  }
+
+  /**
+   * §V63: pay every match no batch covers yet. Writes ONE task, never a ledger entry — the scan
+   * credits it when the task is ticked, which is what keeps §V3 true. Returns the chips of the
+   * batch, or null when there was nothing pending (§V68).
+   */
+  async processSession(id: string): Promise<number | null> {
+    const g = this.settings.gaming;
+    if (!g.enabled) return null; // §V58
+    const s = this.sessionOf(id);
+    if (!s) return null;
+    const pending = pendingOf(s);
+    if (pending.length === 0) return null; // §V68 nothing pending → no task
+    const ts = this.thresholds(), bs = this.bands();
+    const chips = pending.reduce((a, m) => a + matchChips(m, ts, bs), 0);
+    const taskFile = await this.store.readTaskFile(g.taskFile);
+    const ordinal = countBatches(taskFile, id) + 1; // §V63 ordinal from the task file, not stored
+    await this.store.appendTask(g.taskFile, taskBlock(id, ordinal, pending, ts, bs, g.taskTag));
+    await this.store.setProcessed(g.folder, id, s.matches.length); // §V63 step 3
+    await this.reloadSessions();
+    notify(`Session ${id}: ${pending.length} match${pending.length === 1 ? "" : "es"} batched, +${chips}🪙 waiting on the task`);
+    return chips;
+  }
+
+  /** §V82: sweep every session that has pending matches, oldest-first, one task each. */
+  async processAllSessions(): Promise<void> {
+    if (!this.settings.gaming.enabled) return; // §V58
+    const ids = this.sessions
+      .filter(({ session }) => pendingOf(session).length > 0)
+      .map(({ session }) => session.id)
+      .sort(); // oldest-first
+    if (!ids.length) { notify("Nothing to process, every session is clear"); return; }
+    let batches = 0;
+    for (const id of ids) if ((await this.processSession(id)) !== null) batches++;
+    notify(`Processed ${batches} session${batches === 1 ? "" : "s"}`);
+  }
+
+  /** §I.cmd — today's session at a glance. */
+  private reviewSession(): void {
+    if (!this.settings.gaming.enabled) return; // §V58
+    const s = this.sessionOf(today());
+    if (!s || s.matches.length === 0) { notify("No matches logged today"); return; }
+    const ts = this.thresholds(), bs = this.bands();
+    const scores = s.matches.map((m) => scoreOf(m, ts).score);
+    const best = Math.max(...scores);
+    const avg = Math.round((scores.reduce((a, b) => a + b, 0) / scores.length) * 10) / 10;
+    const pending = pendingChips(s, ts, bs);
+    notify(`Session ${s.id}: ${s.matches.length} matches, best ${best}, avg ${avg}, ${pending}🪙 pending`);
+  }
+
+  async openMatchScreen(): Promise<void> {
+    if (!this.settings.gaming.enabled) return; // §V58
+    await this.activateView();
+    for (const leaf of this.app.workspace.getLeavesOfType(MILLE_VIEW)) {
+      const v = leaf.view;
+      if (v instanceof MilleFeuilleView) v.openMatch();
+    }
   }
 
   async reload(): Promise<void> {
@@ -107,11 +230,7 @@ export default class MilleFeuillePlugin extends Plugin {
   // ---- scanning ----
   private async onFileChanged(f: TAbstractFile): Promise<void> {
     if (!(f instanceof TFile) || f.extension !== "md") return;
-    if (!inScanScope(f.path, {
-      include: this.settings.scanInclude,
-      exclude: this.settings.scanExclude,
-      base: this.settings.baseFolder,
-    })) return; // §V30 scope + own-data guard
+    if (!inScanScope(f.path, this.scope())) return; // §V30,§V65 scope + own-data + gaming guard
     const content = await this.app.vault.read(f);
     const sink: LedgerEntry[] = [];
     for (const raw of content.split("\n")) this.reconcileLine(f.path, raw, sink);
@@ -293,7 +412,7 @@ export default class MilleFeuillePlugin extends Plugin {
   /** §V32: walk every in-scope md file through reconcileLine (quiet). Idempotent backfill. */
   async rescanAll(): Promise<void> {
     const before = this.balance();
-    const scope = { include: this.settings.scanInclude, exclude: this.settings.scanExclude, base: this.settings.baseFolder };
+    const scope = this.scope();
     let moved = 0;
     const sink: LedgerEntry[] = [];
     for (const f of this.app.vault.getMarkdownFiles()) {
