@@ -51,3 +51,15 @@ test("payout applies crit multiplier, rounds (V2)", () => {
 test("milestoneMultiplier null when no tag", () => {
   assert.equal(milestoneMultiplier("plain task", DEFAULT_ECONOMY), null);
 });
+
+test("gaming payload → source gaming, base = payload; habit and no-payload untouched (V77 / AC 25)", () => {
+  const g = classifyLine("Gaming session 2026-08-18 · gaming:14 #gaming-session", DEFAULT_ECONOMY);
+  assert.deepEqual(g, { source: "gaming", base: 14, tier: null });
+  assert.equal(classifyLine("Gaming session 2026-08-18 (2) · gaming:0", DEFAULT_ECONOMY).base, 0); // gaming:0 is valid
+  assert.equal(classifyLine("meditate · ult ✅ 2026-08-18", DEFAULT_ECONOMY).source, "habit"); // still a habit line
+  assert.deepEqual(classifyLine("Gaming session 2026-08-18", DEFAULT_ECONOMY), { source: "task", base: DEFAULT_ECONOMY.defaultBase, tier: null });
+  // an unreadable payload is not a payload — the line falls back to a regular task
+  assert.equal(classifyLine("Gaming session · gaming:oops", DEFAULT_ECONOMY).source, "task");
+  // the payload wins over a hand-added milestone tag: the amount is the amount (V77)
+  assert.equal(classifyLine("Gaming session · gaming:14 #x2", DEFAULT_ECONOMY).base, 14);
+});

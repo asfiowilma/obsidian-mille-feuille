@@ -23,7 +23,7 @@ export const DEFAULT_ECONOMY: Economy = {
 
 export type Rng = () => number; // [0,1)
 
-export type Source = "task" | "subtask" | "milestone" | "habit";
+export type Source = "task" | "subtask" | "milestone" | "habit" | "gaming";
 
 export interface Classified {
   source: Source;
@@ -31,10 +31,15 @@ export interface Classified {
   tier: string | null; // milestone tag or habit tier
 }
 
+const GAMING_RE = / · gaming:(\d+)(?!\d)/; // §V77 batch payload — the amount that pays
 const HABIT_RE = / · (farm|ult)\b/; // §V12 tier-token shape ` · <tier>`
 
-/** Classify a scanned checkbox line → source + base payout (pre-crit). §V4,§V5,§V12 */
+/** Classify a scanned checkbox line → source + base payout (pre-crit). §V4,§V5,§V12,§V77 */
 export function classifyLine(text: string, e: Economy): Classified {
+  // §V77 gaming first: the payload IS the amount, so no other rule may claim the line. A gaming
+  // line and a habit line are disjoint, and a gaming line never carries a milestone tag.
+  const game = GAMING_RE.exec(text);
+  if (game) return { source: "gaming", base: Number(game[1]), tier: null };
   const habit = HABIT_RE.exec(text);
   if (habit) {
     const tier = habit[1] as HabitTier;

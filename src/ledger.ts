@@ -145,10 +145,14 @@ export function aggregate(entries: LedgerEntry[], month: string): MonthlyAggrega
   for (const e of inMonth) {
     switch (e.kind) {
       case "credit": {
-        const tier = e.tier ?? "base";
-        chipsByTier[tier] = (chipsByTier[tier] ?? 0) + e.chips;
-        chipsBySource[e.source] = (chipsBySource[e.source] ?? 0) + e.chips;
-        if (e.crit) critCount++;
+        // §V66 gaming stays out of chipsByTier entirely — it has no tier, and folding it into
+        // "base" would merge it back into the task totals the separation exists to split.
+        if (e.source !== "gaming") {
+          const tier = e.tier ?? "base";
+          chipsByTier[tier] = (chipsByTier[tier] ?? 0) + e.chips;
+        }
+        chipsBySource[e.source] = (chipsBySource[e.source] ?? 0) + e.chips; // §V66 own key
+        if (e.crit) critCount++; // §V78 a gaming credit crits like any other
         break;
       }
       case "reversal": reversals++; break;

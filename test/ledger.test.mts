@@ -139,3 +139,16 @@ test("groupByMonth buckets a batch per ledger file, order kept (V20)", () => {
   assert.equal(g.get("2026-07")!.length, 1);
   assert.equal(groupByMonth([]).size, 0);
 });
+
+test("gaming chips are separate in the aggregate (V16,V66 / AC 20)", () => {
+  const e: LedgerEntry[] = [
+    { kind: "credit", date: "2026-08-01", source: "task", key: "a", base: 40, crit: null, chips: 40, tier: null },
+    { kind: "credit", date: "2026-08-02", source: "gaming", key: "g1", base: 14, crit: null, chips: 14, tier: null },
+    { kind: "credit", date: "2026-08-03", source: "gaming", key: "g2", base: 8, crit: 1.5, chips: 8, tier: null },
+  ];
+  const a = aggregate(e, "2026-08");
+  assert.equal(a.chipsBySource.gaming, 22);
+  assert.equal(a.chipsBySource.task, 40); // gaming never folded into the task total
+  assert.equal(a.chipsByTier.base, 40); // §V66 gaming stays out of chipsByTier entirely
+  assert.equal(a.critCount, 1); // §V78 a gaming crit still counts
+});

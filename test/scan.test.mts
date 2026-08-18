@@ -62,3 +62,28 @@ test("taskKey ignores Tasks metadata edits, keeps ✅ date (V13)", () => {
     [bare, `task:${f}:buy tickets ⏳ 2026-08-20 ✅ 2026-08-18`]);
   assert.deepEqual(taskKeys(f, "plain task"), [`task:${f}:plain task`]); // no legacy dupe
 });
+
+test("the gaming folder is out of scope even when include lists it (V65,V30 / AC 21)", () => {
+  const s = { include: ["Gaming Ledger", "Work"], exclude: [], base: "mille-feuille", gaming: "Gaming Ledger" };
+  assert.equal(inScanScope("Gaming Ledger/2026-08-18.md", s), false); // a match note credits nothing
+  assert.equal(inScanScope("Gaming Ledger/old/2026-01-01.md", s), false); // subfolders too
+  assert.equal(inScanScope("Work/plan.md", s), true); // every other include still works
+  // the exclusion matches at a path boundary, not as a substring
+  assert.equal(inScanScope("Gaming Ledgerside/x.md", { ...s, include: [] }), true);
+  // the task file itself lives outside the gaming folder, so its batch tasks stay creditable
+  assert.equal(inScanScope("Gaming/Sessions.md", { ...s, include: [] }), true);
+});
+
+test("each gaming batch keys apart, and editing the payload mints a new key (V63,V64 / AC 15,26)", () => {
+  const f = "Gaming/Sessions.md";
+  const b1 = taskKey(f, "Gaming session 2026-08-18 · gaming:14 #gaming-session ✅ 2026-08-19");
+  const b2 = taskKey(f, "Gaming session 2026-08-18 (2) · gaming:7 #gaming-session ✅ 2026-08-19");
+  assert.notEqual(b1, b2); // two batches of one day are two credits, never one
+  // §V64 the amount lives inside the hashed text: a hand edit is a new, unpaid line
+  const edited = taskKey(f, "Gaming session 2026-08-18 · gaming:99 #gaming-session ✅ 2026-08-19");
+  assert.notEqual(b1, edited);
+  // the ✅ date is part of the key, so the same batch ticked on another day is another credit
+  assert.notEqual(b1, taskKey(f, "Gaming session 2026-08-18 · gaming:14 #gaming-session ✅ 2026-08-20"));
+  // a subline is not a checkbox and can never credit
+  assert.equal(parseLine("  - Matches: 5 (1-5)"), null);
+});

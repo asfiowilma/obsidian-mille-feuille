@@ -76,12 +76,18 @@ export interface ScanScope {
   include: string[]; // folder prefixes; empty = whole vault
   exclude: string[]; // folder prefixes
   base: string; // plugin data folder — always excluded
+  gaming?: string; // §V65 match-note folder — always excluded, include can't override it
 }
 
-/** Is a file path in scan scope? Base folder always out; exclude beats include. §V30 */
+/**
+ * Is a file path in scan scope? Base folder always out; exclude beats include. §V30
+ * The gaming folder is out on the same footing as our own data folder: a match note holds
+ * checkboxes and table rows, so scanning it would credit chips for logging a game. §V65,§V3
+ */
 export function inScanScope(path: string, s: ScanScope): boolean {
   const under = (prefix: string) => prefix !== "" && (path === prefix || path.startsWith(prefix.replace(/\/?$/, "/")));
   if (under(s.base)) return false;
+  if (s.gaming && under(s.gaming)) return false;
   if (s.exclude.some(under)) return false;
   if (s.include.length === 0) return true;
   return s.include.some(under);
