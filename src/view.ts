@@ -8,6 +8,10 @@ import {
 import { aggregate } from "./ledger.js";
 import type { SpendEntry, ClaimEntry } from "./ledger.js";
 import { gachaActive, todayRollCount } from "./gacha.js";
+import {
+  CAPS, scoreOf, chipsOf, bandCap, matchChips, pendingOf, pendingChips,
+  type Match, type Session, type Threshold, type Band, type RayState,
+} from "./gaming.js";
 
 export const MILLE_VIEW = "mille-feuille-view";
 
@@ -16,7 +20,7 @@ const fmt = (n: number): string => (n === Infinity ? "∞" : n.toLocaleString())
 const countsLine = (r: Reward): string =>
   `${r.purchasedCount} bought · ${r.claimedCount} claimed · ${fmt(remaining(r))} left`;
 
-type Screen = "home" | "add" | "picker";
+type Screen = "home" | "add" | "picker" | "match";
 
 interface FormState {
   name: string;
@@ -44,6 +48,30 @@ const formFrom = (r: Reward): FormState => ({
 
 type ShopSort = "name" | "price-low" | "price-high";
 
+// §V62 log-screen state. Raw stats only — the score and the chips are derived on every paint.
+interface MatchForm {
+  mon: string;
+  deaths: number;
+  farm: number | null;
+  damage: number; // thousands
+  points: number;
+  ray: RayState;
+  focus: boolean;
+}
+const blankMatch = (): MatchForm => ({ mon: "", deaths: 0, farm: null, damage: 0, points: 0, ray: "none", focus: false });
+
+// Human labels for the thresholds that fired. §V62
+const TH_LABEL: Record<string, (op: string, v: number | string) => string> = {
+  deaths: (op, v) => `Deaths ${op} ${v}`,
+  farm: (op, v) => `Level ${op} ${v} at Ray`,
+  damage: (op, v) => `${v}k damage`,
+  points: (op, v) => `${v} points`,
+  ray: (_op, v) => (v === "stolen" ? "Stole Rayquaza" : "Secured Rayquaza"),
+  focus: () => "Focus goal",
+};
+const thLabel = (t: Threshold): string =>
+  `${(TH_LABEL[t.stat] ?? (() => t.stat))(t.op, t.val)} +${t.pts}`;
+
 // §V44 nothing-result copy, random per roll.
 const NOTHING_TEXT = ["Nope! LMAO 🤣", "Nope! 🤣", "Better luck... nah 💀", "Empty. Skill issue."];
 const reducedMotion = (): boolean => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -66,6 +94,8 @@ export class MilleFeuilleView extends ItemView {
   private shopAffordable = false;
   private gachaReveal: GachaReveal | null = null;
   private gachaAnimating = false;
+  private matchForm = blankMatch();
+  private focusDraft = "";
 
   constructor(leaf: WorkspaceLeaf, private plugin: MilleFeuillePlugin) {
     super(leaf);
@@ -83,6 +113,7 @@ export class MilleFeuilleView extends ItemView {
     root.addClass("mf-root");
     if (this.screen === "home") this.renderHome(root);
     else if (this.screen === "picker") this.renderPicker(root);
+    else if (this.screen === "match") this.renderMatch(root);
     else this.renderAdd(root);
   }
 
@@ -121,6 +152,9 @@ export class MilleFeuilleView extends ItemView {
     } else {
       for (const r of queue) this.queueCard(root, r, stale);
     }
+
+    // §V69 gaming section sits between the queue and the gacha section.
+    this.renderGamingSec(root);
 
     // §V42 gacha section between the queue and the shop.
     this.renderGacha(root);
@@ -462,6 +496,296 @@ export class MilleFeuilleView extends ItemView {
     card.onkeydown = (e: KeyboardEvent) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); void grant(); } };
   }
 
+
+  // ---------------- GAMING (§V69-§V83) ----------------
+
+  /** Public entry for the "Log a match" command. §I.cmd */
+  openMatch(): void {
+    this.matchForm = blankMatch();
+    this.focusDraft = "";
+    this.screen = "match";
+    this.render();
+  }
+
+  private renderGamingSec(root: HTMLElement): void {
+    const p = this.plugin;
+    const g = p.settings.gaming;
+    if (!g.enabled) return; // §V58 presence == visibility, no collapse control needed
+    const ts = p.thresholds(), bs = p.bands();
+    const id = today();
+    const entry = p.sessions.find((x) => x.session.id === id);
+    const s: Session = entry?.session ?? { id, processed: 0, matches: [] };
+    const unreadable = entry?.unreadable ?? 0;
+    const pending = pendingOf(s);
+    const covered = s.matches.slice(0, s.processed);
+    const coveredChips = covered.reduce((a, m) => a + matchChips(m, ts, bs), 0);
+    const pendChips = pendingChips(s, ts, bs);
+    const batches = p.batchCounts[id] ?? 0;
+    // §V79 older sessions that still hold pending matches, oldest-first.
+    const older = p.sessions
+      .filter((x) => x.session.id !== id && pendingOf(x.session).length > 0)
+      .map((x) => x.session)
+      .sort((a, b) => a.id.localeCompare(b.id));
+
+    const det = root.createEl("details", { cls: "mf-gm-sec" });
+    det.open = s.matches.length > 0; // §V70 open when there is something to see, from data only
+    const sum = det.createEl("summary", { cls: "mf-gm-sum" });
+    sum.createSpan({ cls: "mf-sec-h", text: "🎮 Gaming" });
+    const right = sum.createDiv({ cls: "mf-gm-sum-right" });
+    if (older.length) {
+      // §V79 same pill pattern as a stale purchase — it never lies about which session is on screen.
+      right.createSpan({ cls: "mf-pill", text: `${older.length} unprocessed day${older.length === 1 ? "" : "s"}` });
+    }
+    right.createSpan({
+      cls: "mf-gm-count",
+      text: s.matches.length ? `${s.matches.length} match${s.matches.length === 1 ? "" : "es"} today` : "no matches yet",
+    });
+
+    for (const o of older) this.olderSessionLine(det, o, ts, bs);
+
+    const box = det.createDiv({ cls: "mf-gm" });
+    const head = box.createDiv({ cls: "mf-gm-head" });
+    const dateEl = head.createDiv({ cls: "mf-gm-date", text: `Session ${id}` });
+    if (s.matches.length === 0) {
+      // §V70 empty: one line, one control. No totals, no note line, no Process control at all.
+      dateEl.createEl("small", { text: "Nothing logged. Nothing pending." });
+      box.createDiv({
+        cls: "mf-gm-empty",
+        text: "No matches yet. Log one after you play and the chips add up here.",
+      });
+      const foot = box.createDiv({ cls: "mf-gm-foot" });
+      const log = foot.createEl("button", { cls: "mf-btn btn-primary", text: "+ Log match" });
+      log.onclick = () => this.openMatch();
+      return;
+    }
+
+    dateEl.createEl("small", {
+      text: batches
+        ? `${batches} batch${batches === 1 ? "" : "es"} written. Chips land when you tick the task.`
+        : "Nothing processed yet. Chips land when you tick the task.",
+    });
+    const sub = head.createDiv();
+    const total = sub.createDiv({ cls: "mf-gm-total" + (pendChips ? "" : " none") });
+    total.createSpan({ text: String(pendChips) });
+    total.createSpan({ cls: "u", text: "pending" });
+    // §V69 both totals in words — the dim/bright split is never the only signal.
+    sub.createDiv({ cls: "mf-gm-head-sub" }).createSpan({
+      cls: "mf-gm-paid",
+      text: `${pending.length} pending · ${covered.length} covered (${coveredChips}🪙)`,
+    });
+
+    const list = box.createDiv({ cls: "mf-gm-list" });
+    const cap = bandCap(bs);
+    s.matches.forEach((m, i) => this.matchRow(list, m, i < s.processed, ts, bs, cap));
+
+    const notes: string[] = [];
+    const zeros = s.matches.filter((m) => matchChips(m, ts, bs) === 0).length;
+    if (zeros) notes.push(`${zeros} match${zeros === 1 ? "" : "es"} scored 0. Neutral, never a penalty.`);
+    if (unreadable) notes.push(`${unreadable} row${unreadable === 1 ? "" : "s"} unreadable`); // §V75
+
+    const foot = box.createDiv({ cls: "mf-gm-foot" });
+    const log = foot.createEl("button", { cls: "mf-btn btn-ghost", text: "+ Log match" });
+    log.onclick = () => this.openMatch();
+    // §V73 label carries the count and the chips; disabled with its own label when nothing is new.
+    const proc = foot.createEl("button", { cls: "mf-btn btn-primary" });
+    if (pending.length === 0) {
+      proc.setText("Nothing new");
+      proc.disabled = true;
+    } else {
+      proc.setText(`Process ${pending.length} · +${pendChips}`);
+      proc.onclick = () => void this.plugin.processSession(id);
+    }
+    if (notes.length) box.createDiv({ cls: "mf-gm-note", text: notes.join(" ") });
+  }
+
+  /** §V79,§V81 one compact line per older session — totals only, its own Process control. */
+  private olderSessionLine(root: HTMLElement, s: Session, ts: Threshold[], bs: Band[]): void {
+    const pending = pendingOf(s);
+    const chips = pendingChips(s, ts, bs);
+    const age = daysAgo(s.id, today());
+    const stale = age !== null && age > this.plugin.settings.economy.staleAfterDays;
+    const row = root.createDiv({ cls: "mf-gm-older" });
+    const left = row.createDiv({ cls: "mf-gm-older-main" });
+    left.createSpan({ cls: "mf-gm-older-id", text: s.id });
+    left.createSpan({
+      cls: "mf-gm-older-sub",
+      text: `${pending.length} pending · +${chips}🪙${stale ? ` · ${age} days ago` : ""}`,
+    });
+    const btn = row.createEl("button", { cls: "mf-btn btn-ghost", text: `Process ${pending.length}` });
+    btn.onclick = () => void this.plugin.processSession(s.id); // §V82 this session only
+  }
+
+  private matchRow(list: HTMLElement, m: Match, coveredRow: boolean, ts: Threshold[], bs: Band[], cap: number): void {
+    const score = scoreOf(m, ts).score;
+    const chips = chipsOf(score, bs);
+    const row = list.createDiv({ cls: "mf-gm-row" + (coveredRow ? " paid" : "") });
+    // §V69 state is never colour alone — every row says which it is.
+    setTooltip(row, coveredRow ? "Covered by a batch already" : "Pending, not batched yet");
+    row.createSpan({ cls: "mf-gm-n", text: String(m.n) });
+    row.createSpan({ cls: "mf-gm-mon", text: m.mon || "—" });
+    pips(row, chips, cap);
+    row.createSpan({ cls: "mf-gm-score", text: String(score) });
+    row.createSpan({ cls: "mf-gm-chips" + (chips ? "" : " zero"), text: chips ? `+${chips}` : "0" });
+  }
+
+  // ---------------- LOG SCREEN (§V62, §V71, §V72) ----------------
+  private renderMatch(root: HTMLElement): void {
+    const p = this.plugin;
+    const g = p.settings.gaming;
+    const ts = p.thresholds(), bs = p.bands();
+    const cap = bandCap(bs);
+    const id = today();
+    const session = p.sessionOf(id);
+    const f = this.matchForm;
+    const n = (session?.matches.length ?? 0) + 1;
+
+    const head = root.createDiv({ cls: "mf-add-head" });
+    const back = head.createEl("button", { cls: "mf-back", text: "‹ Back" });
+    back.onclick = () => { this.screen = "home"; this.render(); }; // §V72 writes nothing
+    head.createSpan({ cls: "mf-add-ttl", text: `Match ${n} · ${id}` });
+
+    // §V76 asked once per session, inline on this screen — never a modal.
+    if (g.promptFocus && session?.focus === undefined) {
+      const fw = field(root, "Focus goal for this session");
+      const fi = fw.createEl("input", { attr: { type: "text", placeholder: "e.g. dodge before you commit" } });
+      fi.value = this.focusDraft;
+      fi.oninput = () => { this.focusDraft = fi.value; };
+      fw.createEl("small", { cls: "mf-hint", text: "Asked once a day. It never changes a score." });
+    }
+
+    // live readout
+    const live = root.createDiv({ cls: "mf-live" });
+    const scoreEl = live.createDiv({ cls: "mf-live-box" });
+    const scoreV = scoreEl.createSpan({ cls: "mf-live-v" });
+    scoreEl.createSpan({ cls: "mf-live-l", text: "score" });
+    const chipEl = live.createDiv({ cls: "mf-live-box" });
+    const chipV = chipEl.createSpan({ cls: "mf-live-v chips" });
+    chipEl.createSpan({ cls: "mf-live-l", text: "chips" });
+    const pipWrap = live.createDiv({ cls: "mf-live-pips" });
+
+    // Pokémon: the 8 most recent names of the folder + free text. §V83
+    const monField = field(root, "Pokémon");
+    const monRow = monField.createDiv({ cls: "mf-mons" });
+    const monInput = monField.createEl("input", { attr: { type: "text", placeholder: "Type a name" } });
+    monInput.value = f.mon;
+    const paintMons = () => {
+      monRow.empty();
+      for (const name of recentMons(p.sessions)) {
+        const b = monRow.createEl("button", { cls: "mf-mon" + (f.mon === name ? " on" : ""), text: name });
+        b.onclick = () => { f.mon = name; monInput.value = name; paintMons(); };
+      }
+    };
+    monInput.oninput = () => { f.mon = monInput.value; paintMons(); };
+    paintMons();
+
+    // four numeric fields — typed entry and step buttons write the same state. §V71
+    const steppers: (() => void)[] = [];
+    const numeric = (
+      label: string, hint: string, key: "deaths" | "farm" | "damage" | "points", step: number, unit = "",
+    ): void => {
+      const [lo, hi] = CAPS[key];
+      const wrap = root.createDiv({ cls: "mf-step" });
+      const lab = wrap.createDiv({ cls: "mf-step-lab", text: label });
+      lab.createEl("small", { text: hint });
+      const ctl = wrap.createDiv({ cls: "mf-step-ctl" });
+      const minus = ctl.createEl("button", { cls: "mf-step-btn", text: "−" });
+      const input = ctl.createEl("input", { cls: "mf-step-val", attr: { type: "text", inputmode: "numeric" } });
+      const plus = ctl.createEl("button", { cls: "mf-step-btn", text: "+" });
+      if (unit) ctl.createSpan({ cls: "mf-step-unit", text: unit });
+      const get = (): number | null => f[key];
+      const set = (v: number | null): void => {
+        if (key === "farm") f.farm = v === null ? null : clamp(v, lo, hi);
+        else (f[key] as number) = clamp(v ?? 0, lo, hi);
+        paint();
+      };
+      const draw = () => {
+        if (document.activeElement === input) return; // §V71 never fight the caret
+        const v = get();
+        input.value = v === null ? "" : String(v);
+        input.toggleClass("zero", v === null || v === 0);
+      };
+      steppers.push(draw);
+      minus.onclick = () => {
+        const v = get();
+        if (key === "farm") return set(v === null || v - step < lo ? null : v - step);
+        set((v ?? 0) - step);
+      };
+      plus.onclick = () => {
+        const v = get();
+        if (key === "farm" && v === null) return set(lo);
+        set((v ?? 0) + step);
+      };
+      input.oninput = () => {
+        const t = input.value.replace(/[^\d]/g, ""); // §V71 a non-digit never lands
+        input.value = t;
+        set(t === "" ? (key === "farm" ? null : 0) : Number(t));
+      };
+      input.onblur = () => draw();
+      minus.setAttr("aria-label", `Decrease ${label}`);
+      plus.setAttr("aria-label", `Increase ${label}`);
+    };
+    numeric("Deaths", "Every death costs a tier.", "deaths", 1);
+    numeric("Level at Rayquaza", "Blank if you never got there.", "farm", 1);
+    numeric("Damage", "In thousands.", "damage", 5, "k");
+    numeric("Points scored", "", "points", 10);
+
+    // Rayquaza, three ways
+    const rayField = field(root, "Rayquaza");
+    const raySeg = rayField.createDiv({ cls: "mf-seg" });
+    const paintRay = () => {
+      raySeg.empty();
+      const modes: [RayState, string][] = [["none", "Lost it"], ["secured", "Secured"], ["stolen", "Stole it"]];
+      for (const [v, label] of modes) {
+        const b = raySeg.createEl("button", { cls: f.ray === v ? "on" : "", text: label });
+        b.onclick = () => { f.ray = v; paintRay(); paint(); };
+      }
+    };
+    paintRay();
+
+    // focus goal met?
+    const tog = root.createDiv({ cls: "mf-tog" });
+    const lab = tog.createDiv({ cls: "mf-tog-lab" });
+    lab.createSpan({ text: "Focus goal met?" });
+    lab.createEl("small", { text: session?.focus ? session.focus : "The goal you set for this session." });
+    const sw = tog.createEl("button", { cls: "mf-switch" + (f.focus ? " on" : "") });
+    sw.onclick = () => { f.focus = !f.focus; sw.toggleClass("on", f.focus); paint(); };
+
+    // thresholds that passed
+    const firedLab = root.createDiv({ cls: "mf-fired-lab", text: "What scored" });
+    const fired = root.createDiv({ cls: "mf-fired" });
+    firedLab.hide();
+
+    const foot = root.createDiv({ cls: "mf-form-foot" });
+    const cancel = foot.createEl("button", { cls: "mf-btn btn-ghost", text: "Cancel" });
+    cancel.onclick = () => { this.screen = "home"; this.render(); }; // §V72
+    const save = foot.createEl("button", { cls: "mf-btn btn-primary", text: "Save match" });
+    save.onclick = async () => {
+      save.disabled = true;
+      const focus = g.promptFocus && session?.focus === undefined ? this.focusDraft.trim() : undefined;
+      await p.logMatch({ n, mon: f.mon.trim() || "Unknown", deaths: f.deaths, farm: f.farm, damage: f.damage, points: f.points, ray: f.ray, focus: f.focus }, focus);
+      // §V72 the screen stays open with clear fields, ready for the next match.
+      this.matchForm = blankMatch();
+      this.focusDraft = "";
+      this.render();
+    };
+
+    const paint = (): void => {
+      const m: Match = { n, mon: f.mon, deaths: f.deaths, farm: f.farm, damage: f.damage, points: f.points, ray: f.ray, focus: f.focus };
+      const { score, hits } = scoreOf(m, ts);
+      const chips = chipsOf(score, bs);
+      scoreV.setText(String(score));
+      chipV.setText(String(chips));
+      pipWrap.empty();
+      pips(pipWrap, chips, cap);
+      fired.empty();
+      firedLab.toggle(hits.length > 0);
+      if (!hits.length) fired.createSpan({ cls: "mf-fired-none", text: "Nothing yet. A blank match still counts as played." });
+      else for (const h of hits) fired.createSpan({ cls: "mf-fired-tag", text: thLabel(h) });
+      for (const draw of steppers) draw();
+    };
+    paint();
+  }
+
   // ---------------- ADD ----------------
   private renderAdd(root: HTMLElement): void {
     const head = root.createDiv({ cls: "mf-add-head" });
@@ -602,6 +926,32 @@ export class MilleFeuilleView extends ItemView {
 }
 
 function pick<T>(a: T[]): T { return a[Math.floor(Math.random() * a.length)]; }
+const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, v));
+
+/** One mark per chip, up to the per-match cap. §V62,§V69 */
+function pips(parent: HTMLElement, chips: number, cap: number): void {
+  const wrap = parent.createSpan({ cls: "mf-pips" });
+  for (let i = 0; i < Math.max(cap, chips); i++) wrap.createEl("i", { cls: i < chips ? "on" : "" });
+}
+
+/** Whole days between two ISO dates, or null when the id is not a date. §V81 */
+function daysAgo(id: string, todayIso: string): number | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(id)) return null;
+  return Math.round((Date.parse(todayIso) - Date.parse(id)) / 86400000);
+}
+
+/** The 8 most recent Pokémon names from the session notes, newest-first. §V83 */
+function recentMons(sessions: { session: Session }[]): string[] {
+  const out: string[] = [];
+  for (const { session } of sessions) { // already newest-first
+    for (let i = session.matches.length - 1; i >= 0; i--) {
+      const name = session.matches[i].mon.trim();
+      if (name && !out.includes(name)) out.push(name);
+      if (out.length >= 8) return out;
+    }
+  }
+  return out;
+}
 const sleep = (ms: number): Promise<void> => new Promise((r) => window.setTimeout(r, ms));
 
 function field(root: HTMLElement, label: string): HTMLElement {
