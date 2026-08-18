@@ -3,10 +3,12 @@ import type MilleFeuillePlugin from "./main.js";
 import { DEFAULT_ECONOMY, type Economy } from "./economy.js";
 import { DEFAULT_MESSAGES, type Messages } from "./messages.js";
 import { DEFAULT_GACHA, type GachaConfig, type GachaOutcome } from "./gacha.js";
+import { DEFAULT_GAMING, parseThresholds, parseBands, type GamingConfig } from "./gaming.js";
 
 export interface MilleFeuilleSettings {
   economy: Economy;
   gacha: GachaConfig; // §I top-level, separate from economy
+  gaming: GamingConfig; // §I top-level — the gaming curve is separate from the earn curve
   baseFolder: string;
   scanInclude: string[]; // folder prefixes; empty = whole vault
   scanExclude: string[]; // folder prefixes
@@ -16,6 +18,7 @@ export interface MilleFeuilleSettings {
 export const DEFAULT_SETTINGS: MilleFeuilleSettings = {
   economy: structuredClone(DEFAULT_ECONOMY),
   gacha: structuredClone(DEFAULT_GACHA),
+  gaming: structuredClone(DEFAULT_GAMING),
   baseFolder: "mille-feuille",
   scanInclude: [],
   scanExclude: [],
@@ -109,6 +112,7 @@ export class MilleFeuilleSettingTab extends PluginSettingTab {
     });
 
     this.renderGacha(containerEl, save);
+    this.renderGaming(containerEl, save);
     this.renderMessages(containerEl, save);
   }
 
@@ -146,6 +150,51 @@ export class MilleFeuilleSettingTab extends PluginSettingTab {
         t.inputEl.rows = 4;
         t.inputEl.style.width = "300px";
       });
+  }
+
+  // §V58 — toggle always shown; every other gaming field hidden when off. Rebuild via display().
+  private renderGaming(el: HTMLElement, save: () => Promise<void>): void {
+    const g = this.plugin.settings.gaming;
+    new Setting(el).setName("Gaming").setHeading();
+    new Setting(el)
+      .setName("Enable gaming ledger")
+      .setDesc("Score matches from their raw stats and pay the chips through a task. Off hides the section and the commands.")
+      .addToggle((t) =>
+        t.setValue(g.enabled).onChange(async (v) => {
+          g.enabled = v; await save(); this.display(); // full rebuild reveals/hides the fields
+        })
+      );
+    if (!g.enabled) return;
+
+    new Setting(el)
+      .setName("Match notes folder")
+      .setDesc("One note per session lives here. Always excluded from the scan, so a logged match never credits chips on its own.")
+      .addText((t) =>
+        t.setValue(g.folder).onChange(async (v) => { g.folder = v.trim() || DEFAULT_GAMING.folder; await save(); })
+      );
+    new Setting(el)
+      .setName("Session task file")
+      .setDesc("Where a Process run writes the batch task, under its `## Tasks` heading.")
+      .addText((t) =>
+        t.setValue(g.taskFile).onChange(async (v) => { g.taskFile = v.trim() || DEFAULT_GAMING.taskFile; await save(); })
+      );
+    new Setting(el)
+      .setName("Session task tag")
+      .setDesc("Appended to the task line. Empty for no tag.")
+      .addText((t) => t.setValue(g.taskTag).onChange(async (v) => { g.taskTag = v.trim(); await save(); }));
+    new Setting(el)
+      .setName("Ask for a focus goal")
+      .setDesc("Ask once per session, on the log screen. The goal never changes a score.")
+      .addToggle((t) => t.setValue(g.promptFocus).onChange(async (v) => { g.promptFocus = v; await save(); }));
+
+    // §V60,§V61 both tables are text areas with a parser — same pattern as the gacha outcomes
+    // table. A line the parser can't read is skipped, and the count line is how you notice.
+    dslField(el, "Metrics", "One per line: stat op value : points. Stats: deaths, farm, damage (k), points, ray, focus. Every line that passes adds its points.",
+      g.thresholds, DEFAULT_GAMING.thresholds, (v) => parseThresholds(v).length, "threshold",
+      async (v) => { g.thresholds = v; await save(); });
+    dslField(el, "Chip conversion", "One per line: from-to : chips, or N+ : chips. The first band holding the score wins.",
+      g.bands, DEFAULT_GAMING.bands, (v) => parseBands(v).length, "band",
+      async (v) => { g.bands = v; await save(); });
   }
 
   // §V31 — editable toast templates + claim-list CRUD + reset-to-default.
@@ -235,6 +284,46 @@ function strToOutcomes(s: string): GachaOutcome[] {
     out.push(o);
   }
   return out;
+}
+
+/**
+ * A parsed text-area setting: the raw text, a reset control, and a live count of the lines the
+ * parser actually read. The count is the error report — §V60 skips a bad line in silence, so
+ * without it a typo would just quietly stop scoring.
+ */
+function dslField(
+  el: HTMLElement,
+  name: string,
+  desc: string,
+  value: string,
+  fallback: string,
+  count: (v: string) => number,
+  unit: string,
+  onChange: (v: string) => Promise<void>,
+): void {
+  let readout: HTMLElement;
+  const say = (v: string) => {
+    const n = count(v);
+    readout.setText(`${n} ${unit}${n === 1 ? "" : "s"} read`);
+  };
+  const setting = new Setting(el)
+    .setName(name)
+    .setDesc(desc)
+    .addTextArea((t) => {
+      t.setValue(value).onChange(async (v) => { await onChange(v); say(v); });
+      t.inputEl.rows = 8;
+      t.inputEl.style.width = "300px";
+      t.inputEl.style.fontFamily = "var(--font-monospace)";
+      readout = setting.descEl.createDiv({ cls: "mf-dsl-count" });
+      say(value);
+    })
+    .addExtraButton((b) =>
+      b.setIcon("reset").setTooltip("Reset to default").onClick(async () => {
+        await onChange(fallback);
+        setting.controlEl.querySelector("textarea")!.value = fallback;
+        say(fallback);
+      })
+    );
 }
 
 function numberField(
