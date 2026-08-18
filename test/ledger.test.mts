@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  balance, isCredited, frozenChips, aggregate, missingClosedMonths, habitCreditKey, migrateHabitKeys,
+  balance, isCredited, frozenChips, aggregate, missingClosedMonths, habitCreditKey, migrateHabitKeys, groupByMonth,
   type LedgerEntry, type CreditEntry, type ReversalEntry,
 } from "../src/ledger.js";
 
@@ -125,4 +125,17 @@ test("same-day farm + ult habit keys don't collide; legacy keys migrate (V12,V13
   assert.equal((migrateHabitKeys(m)[0] as CreditEntry).key, "kanji·farm·2026-08-18");
   // ult on the same day is untouched by the farm credit
   assert.equal(isCredited(m, "kanji·ult·2026-08-18"), false);
+});
+
+test("groupByMonth buckets a batch per ledger file, order kept (V20)", () => {
+  const e: LedgerEntry[] = [
+    credit("a", 1, { date: "2026-08-18" }),
+    credit("b", 2, { date: "2026-07-02" }),
+    credit("c", 3, { date: "2026-08-01" }),
+  ];
+  const g = groupByMonth(e);
+  assert.deepEqual([...g.keys()], ["2026-08", "2026-07"]);
+  assert.deepEqual(g.get("2026-08")!.map((x) => (x as CreditEntry).key), ["a", "c"]);
+  assert.equal(g.get("2026-07")!.length, 1);
+  assert.equal(groupByMonth([]).size, 0);
 });

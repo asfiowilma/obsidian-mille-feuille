@@ -4,6 +4,7 @@ import { App, TFile, normalizePath, parseYaml, stringifyYaml } from "obsidian";
 import type { Reward } from "./rewards.js";
 import { deriveState, slug } from "./rewards.js";
 import type { LedgerEntry, MonthlyAggregate } from "./ledger.js";
+import { groupByMonth } from "./ledger.js";
 
 export class VaultStore {
   constructor(private app: App, private base: () => string) {}
@@ -68,11 +69,22 @@ export class VaultStore {
   }
 
   async appendLedger(e: LedgerEntry): Promise<void> {
-    const month = e.date.slice(0, 7);
-    const path = this.ledgerPath(month);
-    const entries = parseJsonBlock<LedgerEntry>(await this.readFile(path));
-    entries.push(e);
-    await this.writeFile(path, jsonBlock(`ledger ${month}`, entries));
+    await this.appendLedgerMany([e]);
+  }
+
+  /**
+   * Append a batch with ONE read+write per month file. Appending one entry at a time re-read the
+   * file through Obsidian's vault cache, which lags a just-queued modify — under a rescan's rapid
+   * loop a later write rebuilt the file from a stale base and dropped the entries in between.
+   * Those credits then looked uncredited on reload and got paid again next run. §V13,§V32
+   */
+  async appendLedgerMany(batch: LedgerEntry[]): Promise<void> {
+    for (const [month, entries] of groupByMonth(batch)) {
+      const path = this.ledgerPath(month);
+      const merged = parseJsonBlock<LedgerEntry>(await this.readFile(path));
+      merged.push(...entries);
+      await this.writeFile(path, jsonBlock(`ledger ${month}`, merged));
+    }
   }
 
   async readLedger(): Promise<LedgerEntry[]> {

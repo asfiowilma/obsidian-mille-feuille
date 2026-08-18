@@ -98,6 +98,18 @@ export function migrateHabitKeys(entries: LedgerEntry[]): LedgerEntry[] {
   });
 }
 
+/** Split a batch of entries into one bucket per ledger month file, insertion order kept. §V20 */
+export function groupByMonth(entries: LedgerEntry[]): Map<string, LedgerEntry[]> {
+  const byMonth = new Map<string, LedgerEntry[]>();
+  for (const e of entries) {
+    const month = e.date.slice(0, 7);
+    const bucket = byMonth.get(month);
+    if (bucket) bucket.push(e);
+    else byMonth.set(month, [e]);
+  }
+  return byMonth;
+}
+
 export interface MonthlyAggregate {
   month: string; // yyyy-mm
   chipsByTier: Record<string, number>;

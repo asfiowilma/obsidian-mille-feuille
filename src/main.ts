@@ -99,18 +99,18 @@ export default class MilleFeuillePlugin extends Plugin {
       base: this.settings.baseFolder,
     })) return; // §V30 scope + own-data guard
     const content = await this.app.vault.read(f);
-    let changed = false;
-    for (const raw of content.split("\n")) {
-      if (await this.reconcileLine(f.path, raw)) changed = true;
-    }
-    if (changed) {
+    const sink: LedgerEntry[] = [];
+    for (const raw of content.split("\n")) this.reconcileLine(f.path, raw, sink);
+    if (sink.length) {
+      await this.store.appendLedgerMany(sink); // one write per month, not per entry
       await this.afterCredit();
     }
   }
 
   /** Parse one line, decide credit/reverse vs the ledger, apply. Returns true if it moved chips.
+   *  New entries go into `sink` for the caller to write in one batch — see appendLedgerMany.
    *  quiet (§V32 rescan): suppress per-line toasts + crit-streak so backfill stays silent. */
-  private async reconcileLine(path: string, raw: string, quiet = false): Promise<boolean> {
+  private reconcileLine(path: string, raw: string, sink: LedgerEntry[], quiet = false): boolean {
     const p = parseLine(raw);
     if (!p) return false;
     const hk = habitKey(p.text, today());
@@ -133,7 +133,7 @@ export default class MilleFeuillePlugin extends Plugin {
         base: pay.base, crit: pay.crit, chips: pay.chips, tier: cls.tier,
       };
       this.entries.push(entry);
-      await this.store.appendLedger(entry);
+      sink.push(entry);
       if (!quiet) {
         const m = this.settings.messages;
         const critText = pay.crit ? renderMsg(m, "critSuffix", {}) : "";
@@ -152,7 +152,7 @@ export default class MilleFeuillePlugin extends Plugin {
     if (!frozen || !creditedKey) return false;
     const rev: LedgerEntry = { kind: "reversal", date: today(), reversalOf: creditedKey, chips: -frozen.chips };
     this.entries.push(rev);
-    await this.store.appendLedger(rev);
+    sink.push(rev);
     if (!quiet) {
       notify(renderMsg(this.settings.messages, "refund", { chips: frozen.chips }));
       this.streak.onCredit(false); // uncheck breaks streak
@@ -284,13 +284,15 @@ export default class MilleFeuillePlugin extends Plugin {
     const before = this.balance();
     const scope = { include: this.settings.scanInclude, exclude: this.settings.scanExclude, base: this.settings.baseFolder };
     let moved = 0;
+    const sink: LedgerEntry[] = [];
     for (const f of this.app.vault.getMarkdownFiles()) {
       if (!inScanScope(f.path, scope)) continue;
       const content = await this.app.vault.read(f);
       for (const raw of content.split("\n")) {
-        if (await this.reconcileLine(f.path, raw, true)) moved++;
+        if (this.reconcileLine(f.path, raw, sink, true)) moved++;
       }
     }
+    if (sink.length) await this.store.appendLedgerMany(sink); // one write per month, not per entry
     if (moved) {
       await this.store.writeWalletCache(this.balance());
       this.afford.seed(this.rewards, this.balance()); // reseed baseline silently, no afford spam
