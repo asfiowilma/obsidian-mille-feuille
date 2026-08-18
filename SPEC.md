@@ -130,6 +130,111 @@ desc: "Noise-cancelling, over-ear."   # OPTIONAL. ≤280 chars. top-level, for D
 emoji: "🎧"                            # OPTIONAL. exactly one emoji grapheme
 ```
 
+### §I additions — gaming ledger (v0.6, from design-spec gaming-ledger)
+
+```yaml
+# config: top-level gaming key (⊥ inside economy — gaming curve separate from earn curve)
+gaming:
+  enabled: false               # default off. Off hides section, commands, fields below
+  folder: "Gaming Ledger"      # match notes. Always outside scan scope (V65)
+  taskFile: "Gaming/Sessions.md"
+  taskTag: "#gaming-session"   # "" for no tag
+  promptFocus: true            # ask focus goal at session start
+  thresholds: |                # 1/line: stat op value : points
+    deaths <= 3 : 1
+    deaths <= 2 : 1
+    deaths == 0 : 2
+    farm >= 11 : 1
+    farm >= 13 : 1
+    ray == secured : 2
+    ray == stolen : 3
+    damage >= 60 : 1
+    damage >= 80 : 1
+    damage >= 100 : 1
+    points >= 100 : 1
+    points >= 150 : 1
+    focus == yes : 2
+  bands: |                     # 1/line: from-to : chips, or N+ : chips
+    0-1 : 0
+    2-3 : 1
+    4-5 : 2
+    6-7 : 3
+    8+  : 5
+```
+- ⊥ `grouping` key, ⊥ `autoProcess` key. Session id always = date; Process always manual (design-spec §Q Q4,Q5).
+- Both tables = textarea + parser, pattern of gacha `outcomes` ([settings.ts:138](src/settings.ts)). `SettingGroup` needs app 1.11, manifest `minAppVersion` 1.5.0 ∴ ⊥ grid.
+
+```markdown
+<!-- file: match note — one/session, in `gaming.folder` -->
+---
+type: gaming-session
+session: 2026-08-18
+focus: dodge before you commit
+processed: 5
+---
+
+| # | Pokémon   | Dth | Lv | Ray   | Dmg | Pts | F |
+|---|-----------|-----|----|-------|-----|-----|---|
+| 1 | Cinderace | 2   | 13 | -     |  82 | 118 | y |
+| 2 | Blissey   | 4   | -  | -     |  61 |  44 | n |
+| 3 | Cinderace | 0   | 11 | steal | 104 |  96 | n |
+```
+- `session` = session id, always date. `focus` optional, 1 line text. `processed` = count matches a batch covers; plugin-owned, user ⊥ edit.
+- `Dth` deaths. `Lv` level at Rayquaza, blank = never reached. `Ray` ∈ {`-`,`secured`,`steal`}. `Dmg` damage in thousands. `Pts` points. `F` ∈ {`y`,`n`} focus met.
+- Note holds ⊥ score, ⊥ chips. System derives both (V59).
+
+```ts
+interface Match {
+  n: number;                 // row number, 1-based
+  mon: string;
+  deaths: number;
+  farm: number | null;       // null = never reached Rayquaza
+  damage: number;            // in thousands
+  points: number;
+  ray: "none" | "secured" | "stolen";
+  focus: boolean;
+}
+
+interface Threshold {
+  stat: "deaths" | "farm" | "damage" | "points" | "ray" | "focus";
+  op: "<=" | ">=" | "==" | "<" | ">";
+  val: number | string;      // string for ray and for focus
+  pts: number;
+}
+
+interface Band {
+  from: number;
+  to: number;                // Infinity for the `N+` form
+  chips: number;
+}
+
+interface Session {
+  id: string;                // "2026-08-18"
+  focus?: string;
+  processed: number;
+  matches: Match[];
+}
+```
+
+- **session task** — Process writes 1 task under `## Tasks` of `gaming.taskFile`:
+```markdown
+- [ ] Gaming session 2026-08-18 · gaming:14 #gaming-session
+  - Matches: 5 (1-5)
+  - Scores: 7, 3, 8, 0, 12
+  - Total chips: 14
+```
+  ` · gaming:14` = payload, carries batch chips to scan (V77). Middot convention of habit tier (V12). 3 sublines = human-only, ⊥ load-bearing, scan ⊥ read them. Batch 2 → ` (2)` before payload, batch 3 → ` (3)`, etc. `Matches` range = row numbers of that batch.
+- **ledger entry** — scan writes on tick, gaming code ⊥ write it:
+```ts
+{ kind: "credit", date: "2026-08-19",
+  source: "gaming",
+  key: "task:Gaming/Sessions.md:Gaming session 2026-08-18 · gaming:14·✅2026-08-19",
+  base: 14, crit: null, chips: 14 }
+```
+  Key from `taskKey()` ([scan.ts:60](src/scan.ts)) — path + line text sans Tasks metadata + ✅ date. ∴ batch 2 differs by text ∴ existing idempotent scan pays each batch once (V13), ⊥ own key needed. Payload edit → new key, old key stays credited (V64). `date` = tick date ⊥ session date (V80). `crit` may hold multiplier (V78).
+- **aggregate**: `source` gains `"gaming"`. ⊥ new field — `chipsBySource` already 1 entry/source (V66).
+- **cmd**: `Log a match` → log screen for today session. `Process gaming session` → sweep ∀ session w/ pending matches, oldest-first (V82). `Review session stats` → summary of today session.
+
 ## §V
 
 V1: ∀ completed checkbox (tagged|not, incl mochi habit line) → credit chips on transition to done.
@@ -147,7 +252,7 @@ V12: habit classifier: line carries ` · <tier>`, tier ∈ {farm,ult} → `habit
 V13: habit payout frozen per key `(id,✅date)` on first `[x]`. Rewrite idempotent — no re-credit, no crit re-roll. `[-]` & `[ ]` credit nothing.
 V14: uncheck habit → reversal entry for exact recorded amount; re-check re-applies frozen amount (no crit re-roll).
 V15: every economy param ∈ config object, edited via Obsidian plugin settings tab (⊥ raw file edit needed). Change → live, no recompile.
-V16 (changed): monthly aggregates (chips by tier, purchased/claimed, open/stale count, crit count) produced FROM ledger, ⊥ from reward notes. Monthly pass rolls ledger → permanent aggregate; closed occurrences may then trim. `aggregate()` ⊥ count gacha spend (`subtype=="gacha"`) in `purchased`. Adds `gachaRolls`,`gachaRebated`,`gachaClaims` (§I). Reversal/credit/claim counts unchanged.
+V16 (changed): monthly aggregates (chips by tier, purchased/claimed, open/stale count, crit count) produced FROM ledger, ⊥ from reward notes. Monthly pass rolls ledger → permanent aggregate; closed occurrences may then trim. `aggregate()` ⊥ count gacha spend (`subtype=="gacha"`) in `purchased`. Adds `gachaRolls`,`gachaRebated`,`gachaClaims` (§I). Reversal/credit/claim counts unchanged. **(changed v0.6)** credit `source=="gaming"` → `chipsBySource.gaming`. ⊥ added to task|subtask|habit totals, ⊥ in `chipsByTier`. Gaming credit may crit ∴ counts in `critCount`. Reversal/claim/purchase/gacha counts unchanged.
 V17: rewards & wallet stored as vault notes/frontmatter (⊥ plugin-only `data.json`); derived fields top-level for naive Dataview read.
 V18: every view styled by default (bare-unstyled = defect). Palette bound to Obsidian CSS vars, light/dark fallback, ⊥ hardcoded dark-only. Correct dark+light, mobile+desktop, tap targets ≥ 40px.
 V19: reward card shows counts + remaining servings; `Purchased` (pending) ⊥ mistakable for `Claimed` (done) — distinct badge + tint.
@@ -173,11 +278,11 @@ V27: toast catalogue — event → copy (`<name>` = reward name, `<n>` = chips).
 - enjoy set: [`enjoy it you earned this 🍰`, `go treat yourself ✨`, `no guilt you did the work 🍪`, `fresh out the oven enjoy 🥐`, `cashed in enjoy! 🎉`]
 V28: affordability toast fires once on upward crossing `balance` `<price → ≥price` per reward w/ capacity left. Track per-reward `wasAffordable` bool; fire on false→true only. ⊥ fire when sold-out, ⊥ on load (recompute silent), ⊥ re-fire until balance drops below then re-crosses. Not persisted.
 V29: crit streak — track consecutive crit count across ALL credit sources (task/subtask/milestone/habit; milestone crits count). Streak reaches 2 → toast `Double crit! 🔥`; each further consecutive crit → `Crit streak x<k>! 🔥`. Non-crit credit resets streak to 0. Streak toast in addition to mint/milestone toast.
-V30: scan scope — settings `scanInclude` (folder prefixes, empty = whole vault) & `scanExclude` (prefixes). Line creditable iff file `inScanScope`: base folder always excluded, exclude beats include, prefix match at path boundary (⊥ substring). Own data folder never scanned.
+V30: scan scope — settings `scanInclude` (folder prefixes, empty = whole vault) & `scanExclude` (prefixes). Line creditable iff file `inScanScope`: base folder always excluded, exclude beats include, prefix match at path boundary (⊥ substring). Own data folder never scanned. **(changed v0.6)** `gaming.folder` always out of scope, even when ∈ `scanInclude` (V65). User ⊥ turn off. Base-folder exclusion & include/exclude precedence unchanged ∀ other folder.
 V31: toast copy from editable templates in settings (`messages`), not hardcoded. `{{key}}` → context value; absent key → empty string (⊥ literal `{{…}}`); braces tolerate inner whitespace; plain-text sub, no logic. `{{crit}}` = `critSuffix` template when crit fired else empty. `claim` = list of templates, uniform random pick, add/edit/delete in settings (⊥ reorder — order cosmetic under random pick); empty list → default list. Blank message → default (toast ⊥ blank). Per-message reset-to-default. Templating changes copy only — ⊥ alter when toast fires, variable values, or economy; editing ⊥ credit chips. Per-event vars per design-spec Req 16 table.
 V32: rescan command "Rescan vault for completed tasks" → walk ∀ in-scope md file (§V30 scope) thru `reconcileLine`. Idempotent vs ledger (`isCredited`) — no re-credit, no crit re-roll (V13). Backfills credits missed while plugin off. Already-reversed key stays reversed (⊥ re-credit). Run `afterCredit` once at end iff any moved chips.
 V33: auto monthly roll on load — `onLayoutReady`, ∀ closed month (< current `YYYY-MM`) w/ ≥1 credit ledger entry & ⊥ existing aggregate row → roll it (V16), oldest-first. Current (open) month ⊥ rolled. ⊥ duplicate existing aggregate rows. Manual `roll-monthly` command stays. Monthly toast (V27) ⊥ fire on auto-roll (silent backfill).
-V34: panel shows current-month stats row, read FROM ledger (V16 `aggregate` over `today().slice(0,7)`), ⊥ from reward notes. Shows chips earned this month, claimed count, crit count. Recomputed live on `refreshViews`, ⊥ persisted apart from ledger. Empty month → zeros, row ⊥ hidden.
+V34: panel shows current-month stats row, read FROM ledger (V16 `aggregate` over `today().slice(0,7)`), ⊥ from reward notes. Shows chips earned this month, claimed count, crit count. Recomputed live on `refreshViews`, ⊥ persisted apart from ledger. Empty month → zeros, row ⊥ hidden. **(changed v0.6)** row keeps 3 tiles, ⊥ gaming tile. Gaming separation lives in aggregate (V16) + monthly review, ⊥ panel.
 
 ### §V new — v0.5 shop-gacha (from design-spec)
 
@@ -236,6 +341,57 @@ V55: desc line + CSS clamp. Card shows `desc` below name, inside `mf-card-body` 
 V56: form fields. `FormState` gets `desc` (string) + `emoji` (string). `blankForm` sets each "". `formFrom(r)` sets `desc`=`r.desc`||"", `emoji`=`r.emoji`||"". Add Emoji field = single-line `<input>`, inline error from `isSingleEmoji`, stops save. `valid()` gets `emojiOk = !f.emoji.trim() || isSingleEmoji(f.emoji.trim())`. Add Description field = `<textarea maxlength="280">`, ⊥ live counter (`maxlength` sets limit). On save write each field only when non-empty.
 V57: metadata regression. Reward w/ neither `desc` nor `emoji` → same card as before. Metadata ⊥ change economy (price/payout/buy/claim/aggregate/state). Same as purchasable fields V25.
 
+### §V new — v0.6 gaming ledger (from design-spec)
+
+V58: master enable guard. Check `gaming.enabled` first — before panel section, before settings fields, before command response, before writing note|task. Off → settings show toggle only, panel ⊥ gaming section, ∀ command no-op. Toggle rebuilds tab via `this.display()`. (Pattern V37.)
+V59: note holds raw stats only (§I). ⊥ score, ⊥ chips stored. System derives both per read ∴ threshold|band change re-scores ∀ pending match. Batch already covered keeps chips (V64).
+V60: threshold list. Setting `thresholds` = text, 1 line = `stat op value : points`. Sum points of ∀ passing line — passing lines stack (= PRD groups). Rules:
+- `stat` ∈ {`deaths`,`farm`,`damage`,`points`,`ray`,`focus`}; `op` ∈ {`<=`,`>=`,`==`,`<`,`>`}.
+- `ray` val ∈ {`secured`,`stolen`}; `focus` val ∈ {`yes`,`no`}; else integer.
+- `damage` compared in thousands (note stores thousands).
+- `farm` line ⊥ pass when `Lv` blank (never reached Rayquaza ∴ farm threshold ⊥ true).
+- Unreadable line skipped silently — ⊥ error, ⊥ stop.
+- Empty list → score 0 ∀ match.
+V61: band table. Setting `bands` = text, 1 line = `from-to : chips` | `N+ : chips`. Read in order, first band holding score wins. Score ∉ any band → 0 chips. Chips never < 0. Per-match cap = largest chips in table; default 5.
+V62: log screen. `Screen` gains `"match"`. Replaces panel leaf content, same as `"add"`. ⊥ modal. Parts:
+- header: Back control + title `Match <n> · <session>`.
+- live readout: score, chips, meter 1 mark/chip up to cap.
+- Pokémon control: recent names of session folder as choice row + text field for new name (V83).
+- 4 numeric fields: deaths, level at Rayquaza, damage (thousands), points. Each accepts typed number **&** step-button pair. Step: damage 5, points 10, others 1.
+- 3-way Rayquaza control: `Lost it` | `Secured` | `Stole it`.
+- focus goal toggle.
+- list of passing thresholds w/ points each.
+- Cancel control + Save control.
+V63: Process pays 1 batch. Run reads matches after index `processed` = pending. Order:
+1. count pending, sum their chips.
+2. write 1 task in `gaming.taskFile` — line holds session id, batch ordinal (after 1st), payload ` · gaming:<chips>`; sublines hold count, row range, scores.
+3. raise `processed` to count of note matches.
+
+  Batch never holds match of another batch. Run writes ⊥ ledger entry.
+V64: batch chips frozen. Task carries its total; existing scan pays it on tick. ∴ threshold|band change ⊥ alter covered batch (pending only); row edit inside covered batch ⊥ repay; paid state derived from `processed`, ⊥ per-match flag.
+V65: gaming folder ∉ scan scope, always. True even when `scanInclude` lists it. Reason = anti-loop V3 (match note holds checkboxes + table rows). User ⊥ disable.
+V66: gaming chips separate in aggregate. Credit carries `source "gaming"` → `chipsBySource.gaming`. ⊥ added to task|subtask|habit totals, ⊥ `chipsByTier`. Answers monthly-review question gaming-vs-other-work. Panel ⊥ show separation (V34).
+V67: payout floor. Worst match = 0 chips. Match never negative; default thresholds hold ⊥ negative points. Score-0 match still a match — row stays in note, counted in batch `Matches`.
+V68: zero-chip batch. Pending count == 0 → run does nothing. Pending count > 0 & total chips == 0 → run writes task; credit entry carries 0 chips.
+V69: section + rows. `details` element, heading `🎮 Gaming`, between "Waiting to claim" queue & gacha section. Summary line: match count of session + batch count. Body: session id, pending chips, covered chips, 1 row/match, `+ Log match` control, Process control. Row shows number, Pokémon, meter 1 mark/chip, score, chips. Uses existing stylesheet tokens, ⊥ own colour (V18). Covered row dim, pending row bright — state ⊥ from colour alone: row has tooltip & section head states both totals in words.
+V70: empty + collapsed state. Section open when session has ≥1 match, closed when 0. State from data per render — ⊥ stored, ⊥ setting. Session w/ 0 matches: summary reads `no matches yet`; body = 1 line text + `+ Log match`; pending total, covered line, note line, Process control **absent** (⊥ disabled Process control — nothing to explain when nothing to process). First logged match reopens section.
+V71: numeric field behaviour. Typed value & step button write same state. Clamp ∀ value to field range. Level field accepts empty = never reached Rayquaza. Non-digit chars removed. ⊥ redraw field while focused (redraw moves caret).
+V72: Save & Back on log screen. Save appends 1 row to today session note, creates note when absent, ⊥ change `processed`, clears fields for next match, keeps screen open. Back & Cancel → home screen, write nothing.
+V73: Process control state. Label shows pending count + chips, e.g. `Process 3 · +8`. Pending == 0 → disabled, label `Nothing new`. Match logged after run → count > 0 again, control active for new matches only.
+V74: untick ⊥ release batch. Existing reversal path (V14) returns chips. `processed` ⊥ decrease, batch stays closed. Re-tick re-applies frozen amount (as habit line). Repay = hand-lower `processed` in note. Rare, visible, deliberate. System gives ⊥ control for it.
+V75: unreadable row. Skip table row system ⊥ parse. Count skipped rows/session, show count in section note line, e.g. `1 row unreadable`. Skipped row ⊥ a match — ∉ row numbers, ∉ batch count, pays nothing.
+V76: session focus goal. `promptFocus` default true. True & note has ⊥ `focus` value → log screen asks once for that session, writes answer to frontmatter. 1 line text. Goal ⊥ affect score — threshold `focus == yes` reads row `F` cell, ⊥ frontmatter. Empty goal allowed ∴ ⊥ ask again that session.
+V77: classifier reads gaming payload. `classify()` ([economy.ts:36](src/economy.ts)) gains 1 branch: line holding ` · gaming:<n>` (`<n>` integer ≥0) → source `"gaming"`, base `<n>`. Middot rules follow habit tier (V12):
+- Regular task never holds middot. Gaming line & habit line disjoint — line holds ` · gaming:<n>` | ` · <tier>`, ⊥ both.
+- Gaming line ⊥ milestone tag (`#x2`/`#x3`/`#x5`). Payload = amount; multiplier on top ∉ design.
+- Unreadable payload → line = regular task, pays `defaultBase`. System always writes readable payload ∴ only after hand edit.
+V78: gaming credit rolls crit. Scan calls `payout()` ∀ source ∴ gaming credit rolls same `critChance` + multipliers (V2). Crit applies to batch total, ⊥ single match. Counts in `critCount` & crit streak (V29). 5-chip cap = per-match cap, ⊥ per-batch cap.
+V79: older unprocessed session surfaced. Panel shows today session in full. ∀ older session w/ pending matches → 1 compact line above: session id, pending count, pending chips, own Process control. Compact line ⊥ show per-match rows (note holds detail). Section heading shows pill w/ older-session count, form `1 unprocessed day` (pattern of stale pill V11). Pill + compact lines absent when ∀ older session clear.
+V80: date of late batch. Credit entry `date` = ✅ date (scan owns entry). Session of Monday ticked Tuesday → credits Tuesday. Session date stays in task line + note. Gaming code ⊥ write credit w/ own date (would break V3). Across month end, late batch chips ∈ month of tick — same as ∀ other source incl late habit.
+V81: ⊥ cutoff on session age. ∀ session w/ pending matches offered, any age. Never drop pending matches, never expire session. Compact line (V79) shows age in days when session older than `economy.staleAfterDays`, form `35 days ago`. Reuses existing knob — ⊥ 2nd knob. User who ⊥ want chips deletes note.
+V82: 1 task/session, ⊥ combined task. Panel Process run pays session of its own control. Command `Process gaming session` sweeps ∀ session w/ pending matches, oldest-first, 1 task each. ⊥ 1 task for 2 sessions — freeze (V64) is per session per batch, combined task ⊥ reversible for 1 session alone.
+V83: Pokémon list on log screen. Show 8 most recent names from notes of `gaming.folder`, newest-first, as choice row. Plus text field for name ∉ row. System holds ⊥ list of game names (needs maintenance per game release). Name = free text, ⊥ corrected.
+
 ## §T
 
 id|status|task|cites
@@ -273,6 +429,22 @@ T31|x|`grantFree` helper, `"picker"` screen, grant-marker entry, forfeit on Back
 T32|x|`isSingleEmoji` helper + 1 self-check|V53
 T33|x|`Reward.desc`/`Reward.emoji` fields, card slot order, `.mf-thumb-emoji` + `.mf-desc` clamp styles|V52,V54,V55,V57
 T34|x|Emoji input, Description textarea, validation|V56
+T35|x|`gaming` config key + settings section: master toggle, folder, taskFile, tag, promptFocus. ⊥ grouping, ⊥ autoProcess. Toggle rebuilds via `this.display()`|V58,I.config
+T36|x|threshold parse/serialize + `scoreOf(match, thresholds)` + 1 self-check|V59,V60
+T37|x|band parse/serialize + `chipsOf(score, bands)` + 1 self-check|V61,V67
+T38|x|2 textarea settings (thresholds, bands), each w/ reset control + parsed-count line|V60,V61
+T39|x|match note read/write: frontmatter, raw-stat table, skip unreadable row|V59,V75,I.file
+T40|x|`"match"` screen: 6 fields, typed + step buttons, clamps, live readout, passing-threshold list|V62,V71,V72,V18
+T41|x|Process run: pending slice, task line w/ ordinal + ` · gaming:<chips>` payload, human sublines, raise `processed`|V63,V64,V68
+T42|x|panel gaming section: rows, 2 totals, Process control states, dim covered row, unreadable-row count|V69,V73,V75,V18
+T43|x|section empty + collapsed state|V70
+T44|x|permanent exclusion of `gaming.folder` from scan scope|V30,V65
+T45|x|`"gaming"` source thru `aggregate()`; keep out of task/subtask/habit totals; panel row stays 3 tiles|V16,V34,V66
+T46|x|focus-goal prompt + `focus` frontmatter field|V76
+T47|x|3 commands; `Process gaming session` sweeps ∀ pending session oldest-first|V58,V82,I.cmd
+T48|x|`classify()` gaming branch: ` · gaming:<n>` → source `"gaming"`, base `<n>` + self-check (gaming, habit, no-payload)|V77,V78
+T49|x|surface older unprocessed session: pill, compact line + own Process control, age when > `economy.staleAfterDays`|V79,V81
+T50|x|recent-Pokémon choice row from folder notes, cap 8, + free-text field|V83
 
 ## §B
 
