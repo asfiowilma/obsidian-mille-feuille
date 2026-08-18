@@ -73,6 +73,20 @@ export default class MilleFeuillePlugin extends Plugin {
     this.refreshViews();
   }
 
+  /** Write a run's buffered entries. On failure, drop them from memory so the balance never
+   *  claims chips the ledger doesn't hold. Returns true if the write landed. */
+  private async flush(sink: LedgerEntry[]): Promise<boolean> {
+    if (sink.length === 0) return false;
+    try {
+      await this.store.appendLedgerMany(sink);
+      return true;
+    } catch (err) {
+      this.entries = this.entries.filter((e) => !sink.includes(e));
+      notify(`Ledger write failed, nothing recorded: ${err instanceof Error ? err.message : String(err)}`);
+      return false;
+    }
+  }
+
   private refreshViews(): void {
     for (const leaf of this.app.workspace.getLeavesOfType(MILLE_VIEW)) {
       const v = leaf.view;
@@ -101,10 +115,7 @@ export default class MilleFeuillePlugin extends Plugin {
     const content = await this.app.vault.read(f);
     const sink: LedgerEntry[] = [];
     for (const raw of content.split("\n")) this.reconcileLine(f.path, raw, sink);
-    if (sink.length) {
-      await this.store.appendLedgerMany(sink); // one write per month, not per entry
-      await this.afterCredit();
-    }
+    if (await this.flush(sink)) await this.afterCredit();
   }
 
   /** Parse one line, decide credit/reverse vs the ledger, apply. Returns true if it moved chips.
@@ -292,7 +303,7 @@ export default class MilleFeuillePlugin extends Plugin {
         if (this.reconcileLine(f.path, raw, sink, true)) moved++;
       }
     }
-    if (sink.length) await this.store.appendLedgerMany(sink); // one write per month, not per entry
+    if (!(await this.flush(sink)) && sink.length) return; // write failed, entries rolled back
     if (moved) {
       await this.store.writeWalletCache(this.balance());
       this.afford.seed(this.rewards, this.balance()); // reseed baseline silently, no afford spam

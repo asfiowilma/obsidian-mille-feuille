@@ -5,6 +5,7 @@ import type { Reward } from "./rewards.js";
 import { deriveState, slug } from "./rewards.js";
 import type { LedgerEntry, MonthlyAggregate } from "./ledger.js";
 import { groupByMonth } from "./ledger.js";
+import { jsonBlock, parseJsonBlock, parseJsonBlockStrict } from "./jsonblock.js";
 
 export class VaultStore {
   constructor(private app: App, private base: () => string) {}
@@ -23,6 +24,15 @@ export class VaultStore {
     await this.ensureFolder(this.path());
     await this.ensureFolder(this.path("rewards"));
     await this.ensureFolder(this.path("ledger"));
+  }
+
+  // All ledger/aggregate rewrites run through here in order. Without it, a purchase or gacha roll
+  // landing between a rescan flush's read and its write would be clobbered by the flush. §V6
+  private tail: Promise<unknown> = Promise.resolve();
+  private serialize<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.tail.then(fn, fn);
+    this.tail = run.catch(() => {});
+    return run;
   }
 
   private async writeFile(path: string, content: string): Promise<void> {
@@ -79,12 +89,15 @@ export class VaultStore {
    * Those credits then looked uncredited on reload and got paid again next run. §V13,§V32
    */
   async appendLedgerMany(batch: LedgerEntry[]): Promise<void> {
-    for (const [month, entries] of groupByMonth(batch)) {
-      const path = this.ledgerPath(month);
-      const merged = parseJsonBlock<LedgerEntry>(await this.readFile(path));
-      merged.push(...entries);
-      await this.writeFile(path, jsonBlock(`ledger ${month}`, merged));
-    }
+    await this.serialize(async () => {
+      for (const [month, entries] of groupByMonth(batch)) {
+        const path = this.ledgerPath(month);
+        // Strict: an unreadable month file must abort, not read as empty and wipe its purchases.
+        const merged = parseJsonBlockStrict<LedgerEntry>(await this.readFile(path), path);
+        merged.push(...entries);
+        await this.writeFile(path, jsonBlock(`ledger ${month}`, merged));
+      }
+    });
   }
 
   async readLedger(): Promise<LedgerEntry[]> {
@@ -105,10 +118,14 @@ export class VaultStore {
     return parseJsonBlock<MonthlyAggregate>(await this.readFile(this.aggPath()));
   }
   async writeAggregate(a: MonthlyAggregate): Promise<void> {
-    const rows = (await this.readAggregates()).filter((x) => x.month !== a.month);
-    rows.push(a);
-    rows.sort((x, y) => x.month.localeCompare(y.month));
-    await this.writeFile(this.aggPath(), jsonBlock("monthly aggregates", rows));
+    await this.serialize(async () => {
+      const path = this.aggPath();
+      const rows = parseJsonBlockStrict<MonthlyAggregate>(await this.readFile(path), path)
+        .filter((x) => x.month !== a.month);
+      rows.push(a);
+      rows.sort((x, y) => x.month.localeCompare(y.month));
+      await this.writeFile(path, jsonBlock("monthly aggregates", rows));
+    });
   }
 
   // ---- wallet cache ----
@@ -161,18 +178,3 @@ function normalizeReward(fm: Record<string, unknown>): Reward {
   return r;
 }
 
-// ---- JSON-in-fence helpers (ledger/aggregate files stay human-openable) ----
-function jsonBlock(label: string, data: unknown): string {
-  return `> ${label}\n\n\`\`\`json\n${JSON.stringify(data, null, 2)}\n\`\`\`\n`;
-}
-function parseJsonBlock<T>(content: string | null): T[] {
-  if (!content) return [];
-  const m = /```json\s*([\s\S]*?)```/.exec(content);
-  if (!m) return [];
-  try {
-    const v = JSON.parse(m[1]);
-    return Array.isArray(v) ? (v as T[]) : [];
-  } catch {
-    return [];
-  }
-}
