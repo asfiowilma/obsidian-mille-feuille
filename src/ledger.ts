@@ -64,6 +64,40 @@ export function frozenChips(entries: LedgerEntry[], key: string): CreditEntry | 
   return hit;
 }
 
+/** Credit key for one habit completion. Tier is part of it: same id can have farm + ult on one day. §V12,§V13 */
+export function habitCreditKey(id: string, tier: string, doneDate: string): string {
+  return `${id}·${tier}·${doneDate}`;
+}
+
+/**
+ * Legacy habit credits were keyed `id·date` (tier-less), which made a same-day farm+ult pair
+ * collide and silently swallow the second payout. Rewrite them to the tiered key in memory on
+ * load — ledger files stay untouched, so old rows keep working without a re-credit.
+ */
+export function migrateHabitKeys(entries: LedgerEntry[]): LedgerEntry[] {
+  const remap = new Map<string, string>();
+  for (const e of entries) {
+    if (e.kind !== "credit" || e.source !== "habit" || !e.tier) continue;
+    const cut = e.key.lastIndexOf("·");
+    if (cut < 0) continue;
+    const id = e.key.slice(0, cut);
+    if (id.endsWith(`·${e.tier}`)) continue; // already tiered
+    remap.set(e.key, habitCreditKey(id, e.tier, e.key.slice(cut + 1)));
+  }
+  if (remap.size === 0) return entries;
+  return entries.map((e) => {
+    if (e.kind === "credit") {
+      const to = remap.get(e.key);
+      return to ? { ...e, key: to } : e;
+    }
+    if (e.kind === "reversal") {
+      const to = remap.get(e.reversalOf);
+      return to ? { ...e, reversalOf: to } : e;
+    }
+    return e;
+  });
+}
+
 export interface MonthlyAggregate {
   month: string; // yyyy-mm
   chipsByTier: Record<string, number>;

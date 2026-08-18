@@ -9,6 +9,8 @@ import {
   balance as sumBalance,
   isCredited,
   frozenChips,
+  habitCreditKey,
+  migrateHabitKeys,
   aggregate,
   missingClosedMonths,
   type LedgerEntry,
@@ -17,7 +19,7 @@ import {
 import type { Reward } from "./rewards.js";
 import { isSoldOut, purchase, claim as claimReward, slug, hasCapacity, grantFree } from "./rewards.js";
 import { canRoll, rollOutcome, rollNet, type GachaOutcome, type RollDenial } from "./gacha.js";
-import { parseLine, habitKey, taskKey, decideAction, inScanScope } from "./scan.js";
+import { parseLine, habitKey, taskKeys, decideAction, inScanScope } from "./scan.js";
 import { CritStreak, AffordabilityTracker } from "./toasts.js";
 import { renderMsg, renderClaim, critStreakCopy } from "./messages.js";
 import { VaultStore } from "./store.js";
@@ -66,7 +68,7 @@ export default class MilleFeuillePlugin extends Plugin {
   }
 
   async reload(): Promise<void> {
-    this.entries = await this.store.readLedger();
+    this.entries = migrateHabitKeys(await this.store.readLedger());
     this.rewards = await this.store.readRewards();
     this.refreshViews();
   }
@@ -111,22 +113,23 @@ export default class MilleFeuillePlugin extends Plugin {
   private async reconcileLine(path: string, raw: string, quiet = false): Promise<boolean> {
     const p = parseLine(raw);
     if (!p) return false;
-    const hk = habitKey(p.text);
-    const key = hk ? `${hk.id}·${hk.doneDate}` : taskKey(path, p.text);
-    const credited = isCredited(this.entries, key);
-    const action = decideAction(p, credited);
+    const hk = habitKey(p.text, today());
+    // Candidate keys, canonical first: a line can already be credited under an older key shape.
+    const cand = hk ? [habitCreditKey(hk.id, hk.tier, hk.doneDate)] : taskKeys(path, p.text);
+    const creditedKey = cand.find((k) => isCredited(this.entries, k)) ?? null;
+    const action = decideAction(p, creditedKey !== null);
     if (action === "none") return false;
 
     if (action === "credit") {
       const cls = classifyLine(p.text, this.settings.economy);
       // §V13/§V14: reuse frozen amount if this key was ever credited (no crit re-roll).
-      const prior = frozenChips(this.entries, key);
+      const prior = cand.map((k) => frozenChips(this.entries, k)).find((f) => f) ?? null;
       const pay = prior
         ? { base: prior.base, crit: prior.crit, chips: prior.chips }
         : payout(cls.base, this.settings.economy, this.rng);
       const firstEver = !this.entries.some((e) => e.kind === "credit");
       const entry: CreditEntry = {
-        kind: "credit", date: today(), source: cls.source, key,
+        kind: "credit", date: today(), source: cls.source, key: cand[0],
         base: pay.base, crit: pay.crit, chips: pay.chips, tier: cls.tier,
       };
       this.entries.push(entry);
@@ -145,9 +148,9 @@ export default class MilleFeuillePlugin extends Plugin {
     }
 
     // reverse
-    const frozen = frozenChips(this.entries, key);
-    if (!frozen) return false;
-    const rev: LedgerEntry = { kind: "reversal", date: today(), reversalOf: key, chips: -frozen.chips };
+    const frozen = creditedKey ? frozenChips(this.entries, creditedKey) : null;
+    if (!frozen || !creditedKey) return false;
+    const rev: LedgerEntry = { kind: "reversal", date: today(), reversalOf: creditedKey, chips: -frozen.chips };
     this.entries.push(rev);
     await this.store.appendLedger(rev);
     if (!quiet) {

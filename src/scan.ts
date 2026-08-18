@@ -29,18 +29,47 @@ export interface HabitKey {
   doneDate: string;
 }
 
-const HABIT_LINE_RE = /^(\S+) · (farm|ult)\b.*?✅ (\d{4}-\d{2}-\d{2})/;
+const HABIT_LINE_RE = /^(\S+) · (farm|ult)\b/;
+const DONE_DATE_RE = /✅ (\d{4}-\d{2}-\d{2})/;
 
-/** mochi habit line: `<id> · <tier> ✅ <date>` → key (id, ✅date). §V12,§V13 */
-export function habitKey(text: string): HabitKey | null {
+/**
+ * mochi habit line: `<id> · <tier> [✅ <date>]` → key parts. §V12,§V13
+ * `✅ <date>` is optional: the Tasks plugin appends it a beat after the box is ticked, and the
+ * intermediate state can reach us as its own modify event. Falling back to `todayDate` keeps both
+ * events on one key so the completion is credited once, not twice.
+ */
+export function habitKey(text: string, todayDate: string): HabitKey | null {
   const m = HABIT_LINE_RE.exec(text);
   if (!m) return null;
-  return { id: m[1], tier: m[2], doneDate: m[3] };
+  return { id: m[1], tier: m[2], doneDate: DONE_DATE_RE.exec(text)?.[1] ?? todayDate };
 }
 
-/** Stable credit key for a non-habit task line at a location. */
+// Tasks-plugin metadata tokens. Editing any of these on a credited line must not mint a new key.
+const TASK_META_RE = /[⏳🛫📅✅❌🔁⏫🔼🔽⏬🆔⛔➕🏁]/u;
+
+/** Line text minus Tasks metadata — the part that identifies *which* task this is. */
+export function taskIdentity(text: string): string {
+  const cut = text.search(TASK_META_RE);
+  return (cut < 0 ? text : text.slice(0, cut)).trim();
+}
+
+/**
+ * Stable credit key for a non-habit task line. Text minus Tasks metadata, plus the ✅ date when
+ * present so a recurring task earns once per completion. §V13
+ */
 export function taskKey(filePath: string, text: string): string {
-  return `task:${filePath}:${text.trim()}`;
+  const done = DONE_DATE_RE.exec(text)?.[1];
+  return `task:${filePath}:${taskIdentity(text)}${done ? `·✅${done}` : ""}`;
+}
+
+/**
+ * Keys this line could already be credited under, canonical first. Second is the pre-fix shape
+ * (raw trimmed text), so credits made before metadata-stripping are still found and reversible.
+ */
+export function taskKeys(filePath: string, text: string): string[] {
+  const canonical = taskKey(filePath, text);
+  const legacy = `task:${filePath}:${text.trim()}`;
+  return canonical === legacy ? [canonical] : [canonical, legacy];
 }
 
 export interface ScanScope {

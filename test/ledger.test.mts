@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  balance, isCredited, frozenChips, aggregate, missingClosedMonths, type LedgerEntry,
+  balance, isCredited, frozenChips, aggregate, missingClosedMonths, habitCreditKey, migrateHabitKeys,
+  type LedgerEntry, type CreditEntry, type ReversalEntry,
 } from "../src/ledger.js";
 
 const credit = (key: string, chips: number, extra: Partial<LedgerEntry> = {}): LedgerEntry =>
@@ -107,4 +108,21 @@ test("rescan idempotency: re-crediting an already-credited key never double-cred
   e.push({ kind: "reversal", date: "2026-08-09", reversalOf: "task:file:x", chips: -10 });
   assert.equal(isCredited(e, "task:file:x"), false);
   assert.equal(balance(e), 0);
+});
+
+test("same-day farm + ult habit keys don't collide; legacy keys migrate (V12,V13)", () => {
+  assert.notEqual(habitCreditKey("kanji", "farm", "2026-08-18"), habitCreditKey("kanji", "ult", "2026-08-18"));
+
+  const legacy: LedgerEntry[] = [
+    { kind: "credit", date: "2026-08-18", source: "habit", key: "kanji·2026-08-18", base: 2, crit: null, chips: 2, tier: "farm" },
+    { kind: "reversal", date: "2026-08-18", reversalOf: "kanji·2026-08-18", chips: -2 },
+  ];
+  const m = migrateHabitKeys(legacy);
+  assert.equal((m[0] as CreditEntry).key, "kanji·farm·2026-08-18");
+  assert.equal((m[1] as ReversalEntry).reversalOf, "kanji·farm·2026-08-18");
+  assert.equal(isCredited(m, "kanji·farm·2026-08-18"), false); // reversal still lines up
+  // rerun is a no-op (already tiered)
+  assert.equal((migrateHabitKeys(m)[0] as CreditEntry).key, "kanji·farm·2026-08-18");
+  // ult on the same day is untouched by the farm credit
+  assert.equal(isCredited(m, "kanji·ult·2026-08-18"), false);
 });
