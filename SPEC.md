@@ -392,6 +392,10 @@ V81: ⊥ cutoff on session age. ∀ session w/ pending matches offered, any age.
 V82: 1 task/session, ⊥ combined task. Panel Process run pays session of its own control. Command `Process gaming session` sweeps ∀ session w/ pending matches, oldest-first, 1 task each. ⊥ 1 task for 2 sessions — freeze (V64) is per session per batch, combined task ⊥ reversible for 1 session alone.
 V83: Pokémon list on log screen. Show 8 most recent names from notes of `gaming.folder`, newest-first, as choice row. Plus text field for name ∉ row. System holds ⊥ list of game names (needs maintenance per game release). Name = free text, ⊥ corrected.
 
+### §V new — v0.6.1 defect fix
+
+V84: `gaming.taskFile` ! in scan scope while `gaming.enabled`. Exact-path match → creditable, checked BEFORE base|gaming|exclude|include rules. Reason: taskFile = plugin-written payload carrier (V63,V77); it may legally sit inside `gaming.folder`, which V65 makes unscannable ∴ overlap kills payout path silent (⊥ credit, ⊥ toast). Exemption = 1 exact file path, ⊥ folder — ∀ other file in `gaming.folder` stays excluded, V65 intact. `gaming.enabled` false → ⊥ exemption.
+
 ## §T
 
 id|status|task|cites
@@ -445,8 +449,10 @@ T47|x|3 commands; `Process gaming session` sweeps ∀ pending session oldest-fir
 T48|x|`classify()` gaming branch: ` · gaming:<n>` → source `"gaming"`, base `<n>` + self-check (gaming, habit, no-payload)|V77,V78
 T49|x|surface older unprocessed session: pill, compact line + own Process control, age when > `economy.staleAfterDays`|V79,V81
 T50|x|recent-Pokémon choice row from folder notes, cap 8, + free-text field|V83
+T51|x|exempt `gaming.taskFile` from scan-scope exclusion, checked first|V84,V65,I.config
 
 ## §B
 
 id|date|cause|fix
 B1|2026-08-10|V53 `EMOJI_RE` missed keycap seq (`1️⃣`) — U+20E3 mark ∉ `Extended_Pictographic`, so own AC20 example failed|add `|\u{20E3}` alt to EMOJI_RE (V53)
+B2|2026-08-19|`gaming.taskFile` ∈ `gaming.folder` (user layout `Collections/Gaming/Sessions.md`) → V65 folder exclusion swallowed task file → tick ⊥ credit, ⊥ toast. V65 forced folder out, nothing forced taskFile in|V84

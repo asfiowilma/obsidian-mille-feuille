@@ -87,3 +87,21 @@ test("each gaming batch keys apart, and editing the payload mints a new key (V63
   // a subline is not a checkbox and can never credit
   assert.equal(parseLine("  - Matches: 5 (1-5)"), null);
 });
+
+test("the gaming task file is scannable even inside the gaming folder (V84 / B2)", () => {
+  // B2: the user's real layout — the task file lives inside the match-notes folder, which V65
+  // makes unscannable. Without the exemption the tick credited nothing and said nothing.
+  const s = {
+    include: [], exclude: [], base: "mille-feuille",
+    gaming: "Collections/Gaming", task: "Collections/Gaming/Sessions.md",
+  };
+  assert.equal(inScanScope("Collections/Gaming/Sessions.md", s), true);
+  assert.equal(inScanScope("Collections/Gaming/2026-08-19.md", s), false); // match notes still out
+  // no rule may hide the task file: not exclude, not a non-covering include, not the base folder
+  assert.equal(inScanScope("Collections/Gaming/Sessions.md", { ...s, exclude: ["Collections"] }), true);
+  assert.equal(inScanScope("Collections/Gaming/Sessions.md", { ...s, include: ["Daily"] }), true);
+  // the exemption is one exact path, never a prefix
+  assert.equal(inScanScope("Collections/Gaming/Sessions.md/nested.md", s), false);
+  // gaming off → no exemption, the folder rule applies as before
+  assert.equal(inScanScope("Collections/Gaming/Sessions.md", { ...s, task: undefined }), false);
+});

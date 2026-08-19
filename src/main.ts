@@ -1,4 +1,4 @@
-import { Notice, Plugin, TFile, TAbstractFile } from "obsidian";
+import { Notice, Plugin, TFile, TAbstractFile, normalizePath } from "obsidian";
 import {
   MilleFeuilleSettingTab,
   DEFAULT_SETTINGS,
@@ -88,13 +88,18 @@ export default class MilleFeuillePlugin extends Plugin {
     return parseBands(this.settings.gaming.bands);
   }
 
-  /** §V30,§V65 — one scope for every scan path. The gaming folder can never be scanned. */
+  /**
+   * §V30,§V65,§V84 — one scope for every scan path. The gaming folder can never be scanned; the
+   * gaming task file always can, because it is what carries a batch payload to the scan.
+   */
   private scope(): ScanScope {
+    const g = this.settings.gaming;
     return {
       include: this.settings.scanInclude,
       exclude: this.settings.scanExclude,
       base: this.settings.baseFolder,
-      gaming: this.settings.gaming.folder,
+      gaming: g.folder,
+      task: g.enabled ? normalizePath(g.taskFile) : undefined,
     };
   }
 

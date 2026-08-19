@@ -77,15 +77,22 @@ export interface ScanScope {
   exclude: string[]; // folder prefixes
   base: string; // plugin data folder — always excluded
   gaming?: string; // §V65 match-note folder — always excluded, include can't override it
+  task?: string; // §V84 gaming task file — always INCLUDED, no rule can exclude it
 }
 
 /**
  * Is a file path in scan scope? Base folder always out; exclude beats include. §V30
  * The gaming folder is out on the same footing as our own data folder: a match note holds
  * checkboxes and table rows, so scanning it would credit chips for logging a game. §V65,§V3
+ *
+ * The gaming task file is the one exception, and it wins over every rule below. It carries the
+ * batch payload to this scan, so a rule that hides it kills the payout path in silence — and it
+ * may legally sit inside the gaming folder, which §V65 makes unscannable. The exemption is one
+ * exact file path, never a folder, so every match note beside it stays excluded. §V84
  */
 export function inScanScope(path: string, s: ScanScope): boolean {
   const under = (prefix: string) => prefix !== "" && (path === prefix || path.startsWith(prefix.replace(/\/?$/, "/")));
+  if (s.task && path === s.task) return true; // §V84 before everything else
   if (under(s.base)) return false;
   if (s.gaming && under(s.gaming)) return false;
   if (s.exclude.some(under)) return false;
