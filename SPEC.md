@@ -396,6 +396,11 @@ V83: Pokémon list on log screen. Show 8 most recent names from notes of `gaming
 
 V84: `gaming.taskFile` ! in scan scope while `gaming.enabled`. Exact-path match → creditable, checked BEFORE base|gaming|exclude|include rules. Reason: taskFile = plugin-written payload carrier (V63,V77); it may legally sit inside `gaming.folder`, which V65 makes unscannable ∴ overlap kills payout path silent (⊥ credit, ⊥ toast). Exemption = 1 exact file path, ⊥ folder — ∀ other file in `gaming.folder` stays excluded, V65 intact. `gaming.enabled` false → ⊥ exemption.
 
+V85: ledger snapshot ! re-read when ledger file changes under us. LiveSync replicates AFTER plugin load ∴ `entries` loaded at `onLayoutReady` = pre-sync ledger ∀ rest of session. Stale snapshot → `isCredited` false for credits already banked → ∀ synced task file paid 2nd time (flood). Modify under `<base>/ledger/` → `reload()` + wallet cache rewrite, ⊥ scan. Checked BEFORE scope (ledger ∈ base, which V30 excludes). Debounced 1500ms — sync pulls month files in burst, each reload re-reads whole folder. Reload skipped while ledger write in flight (would drop unflushed entries → they look uncredited → double-pay).
+V86: reversal ! evidence of human edit. Obsidian fires `modify` same for keystroke & LiveSync write, ⊥ flag to tell apart. Blast radius asymmetric: wrong credit inflates wallet (correctable), wrong reversal destroys real completion + its chips. ∴ reverse branch gated on `getActiveFile()?.path === f.path`; credit branch ungated (tick from Tasks/Dataview query view writes non-active source file, ! still pay). Missed reversal recoverable via rescan (V32), which passes gate open — user asked explicitly.
+V87: 1 ledger write-lane per device. `ledger/<yyyy-mm>.<device>.md`, `wallet.<device>.md`. 2 devices writing 1 path + whole-file read-modify-write → LiveSync doc conflict → keeps 1 revision entire → loser's spend|claim rows gone. Device id ∈ localStorage (`loadLocalStorage`/`saveLocalStorage`), ⊥ `data.json` — data.json replicates when LiveSync hidden-file sync on ∴ id there syncs & both pick same lane. Optional user label (filename-slugged) else random 6-char id, minted once. `Platform.isMobile` rejected: ≥2 desktop devices per vault → 2 buckets still share lane. Filename = write-lane, ⊥ identity: `readLedger` unions ∀ `.md` ∈ ledger folder ∴ regenerated id → extra file, ⊥ lost row. Legacy `<yyyy-mm>.md` still read.
+V88: ledger file = markdown table, 1 row/entry. Cols `date|kind|ref|source|tier|base|crit|chips|note`. `ref` = key (credit) | reversalOf (reversal) | reward (spend,claim). `note` = `k=v` extras (price, subtype, outcome, value). Empty cell = absent, ⊥ `""`|0 — spend `reward`,`chips`,`price` genuinely optional (V35,V40); credit `tier`,`crit` empty = null. Pipe ∈ key escaped `\|`. Reason: JSON array append rewrites ∀ line after last `}` ∴ ⊥ line-merge possible on conflict; table append = 1 added line + human-legible for hand resolution. Reader accepts legacy json block ∴ ⊥ migration step, ⊥ data rewrite. Strict variant throws on unreadable non-empty file (⊥ overwrite → would wipe purchases).
+
 ## §T
 
 id|status|task|cites
@@ -450,9 +455,14 @@ T48|x|`classify()` gaming branch: ` · gaming:<n>` → source `"gaming"`, base `
 T49|x|surface older unprocessed session: pill, compact line + own Process control, age when > `economy.staleAfterDays`|V79,V81
 T50|x|recent-Pokémon choice row from folder notes, cap 8, + free-text field|V83
 T51|x|exempt `gaming.taskFile` from scan-scope exclusion, checked first|V84,V65,I.config
+T52|x|reload ledger (debounced) on modify under ledger folder, skip while write in flight|V85,V13
+T53|x|gate reverse branch on active-file edit; credit ungated; rescan passes gate open|V86,V14,V32
+T54|x|device-local id in localStorage + settings label; device-suffix ledger & wallet paths|V87,I.file,I.config
+T55|x|markdown-table ledger format, legacy json still read|V88,I.file
 
 ## §B
 
 id|date|cause|fix
 B1|2026-08-10|V53 `EMOJI_RE` missed keycap seq (`1️⃣`) — U+20E3 mark ∉ `Extended_Pictographic`, so own AC20 example failed|add `|\u{20E3}` alt to EMOJI_RE (V53)
 B2|2026-08-19|`gaming.taskFile` ∈ `gaming.folder` (user layout `Collections/Gaming/Sessions.md`) → V65 folder exclusion swallowed task file → tick ⊥ credit, ⊥ toast. V65 forced folder out, nothing forced taskFile in|V84
+B3|2026-08-29|LiveSync desktop↔mobile: wallet flooded w/ chips, spent chips reversed, reward purchases erased from history, wallet ≠ ledger. 2 defects compound — (1) `entries` read once at load, never after; replication lands later ∴ ∀ idempotency check runs vs pre-sync ledger → re-credit + spurious reverse. (2) both devices whole-file rewrite same `ledger/<yyyy-mm>.md` from that stale base → LiveSync conflict keeps 1 revision entire → other device's spend|claim rows gone|V85,V86,V87,V88

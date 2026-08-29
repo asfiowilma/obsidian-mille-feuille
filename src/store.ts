@@ -6,13 +6,15 @@ import { deriveState, slug } from "./rewards.js";
 import type { LedgerEntry, MonthlyAggregate } from "./ledger.js";
 import { groupByMonth } from "./ledger.js";
 import { jsonBlock, parseJsonBlock, parseJsonBlockStrict } from "./jsonblock.js";
+import { tableBlock, parseLedgerBlock, parseLedgerBlockStrict } from "./table.js";
 import {
   appendMatchRow, parseSessionNote, sessionNote, setFrontmatterField, insertTask,
   type Match, type Session,
 } from "./gaming.js";
 
 export class VaultStore {
-  constructor(private app: App, private base: () => string) {}
+  // §V87 `device` is this install's ledger write-lane. Reads always union the whole folder.
+  constructor(private app: App, private base: () => string, private device: () => string) {}
 
   private path(...parts: string[]): string {
     return normalizePath([this.base(), ...parts].join("/"));
@@ -78,8 +80,13 @@ export class VaultStore {
   }
 
   // ---- ledger (one file per month) ----
+  /**
+   * §V87 one write-lane per device: `2026-08.<device>.md`. Both devices writing `2026-08.md` is
+   * what loses purchases - whole-file rewrites collide and LiveSync keeps one revision entirely.
+   * Reads (`readLedger`) union every file in the folder, so a legacy `2026-08.md` still counts.
+   */
   private ledgerPath(month: string): string {
-    return this.path("ledger", `${month}.md`);
+    return this.path("ledger", `${month}.${this.device()}.md`);
   }
 
   async appendLedger(e: LedgerEntry): Promise<void> {
@@ -97,9 +104,9 @@ export class VaultStore {
       for (const [month, entries] of groupByMonth(batch)) {
         const path = this.ledgerPath(month);
         // Strict: an unreadable month file must abort, not read as empty and wipe its purchases.
-        const merged = parseJsonBlockStrict<LedgerEntry>(await this.readFile(path), path);
+        const merged = parseLedgerBlockStrict<LedgerEntry>(await this.readFile(path), path);
         merged.push(...entries);
-        await this.writeFile(path, jsonBlock(`ledger ${month}`, merged));
+        await this.writeFile(path, tableBlock(`ledger ${month}`, merged));
       }
     });
   }
@@ -109,7 +116,7 @@ export class VaultStore {
     const all: LedgerEntry[] = [];
     for (const f of this.app.vault.getMarkdownFiles()) {
       if (!f.path.startsWith(folder + "/")) continue;
-      all.push(...parseJsonBlock<LedgerEntry>(await this.app.vault.read(f)));
+      all.push(...parseLedgerBlock<LedgerEntry>(await this.app.vault.read(f))); // §V88 table or legacy JSON
     }
     return all.sort((a, b) => a.date.localeCompare(b.date));
   }
@@ -196,8 +203,9 @@ export class VaultStore {
   }
 
   // ---- wallet cache ----
+  // §V87 device-suffixed for the same reason as the ledger: one shared path = a sync conflict.
   async writeWalletCache(balance: number): Promise<void> {
-    await this.writeFile(this.path("wallet.md"), `---\nbalance: ${balance}\n---\n`);
+    await this.writeFile(this.path(`wallet.${this.device()}.md`), `---\nbalance: ${balance}\n---\n`);
   }
 }
 

@@ -56,6 +56,20 @@ export class MilleFeuilleSettingTab extends PluginSettingTab {
         })
       );
 
+    new Setting(containerEl)
+      .setName("Device name")
+      .setDesc(
+        "This device's ledger lane. Each device writes its own ledger file, so two devices " +
+        "syncing the same vault never conflict. Stored on this device only - it is deliberately " +
+        "not synced. Leave blank for an auto-generated id."
+      )
+      .addText((t) =>
+        t
+          .setPlaceholder("laptop, work-pc, phone")
+          .setValue(this.plugin.deviceLabel())
+          .onChange((v) => this.plugin.setDeviceLabel(v))
+      );
+
     new Setting(containerEl).setName("Scan scope").setHeading();
     new Setting(containerEl)
       .setName("Include folders")

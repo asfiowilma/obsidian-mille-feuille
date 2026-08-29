@@ -1,4 +1,4 @@
-import { Notice, Plugin, TFile, TAbstractFile, normalizePath } from "obsidian";
+import { Notice, Plugin, TFile, TAbstractFile, debounce, normalizePath } from "obsidian";
 import {
   MilleFeuilleSettingTab,
   DEFAULT_SETTINGS,
@@ -27,6 +27,7 @@ import {
 import { CritStreak, AffordabilityTracker } from "./toasts.js";
 import { renderMsg, renderClaim, critStreakCopy } from "./messages.js";
 import { VaultStore } from "./store.js";
+import { deviceId } from "./device.js";
 import { MILLE_VIEW, MilleFeuilleView } from "./view.js";
 
 const today = (): string => new Date().toISOString().slice(0, 10);
@@ -45,10 +46,11 @@ export default class MilleFeuillePlugin extends Plugin {
   private afford = new AffordabilityTracker();
   private rng: Rng = Math.random;
   private busy = false; // reentrancy lock for money paths (buy/claim) — double-click guard
+  private writing = 0; // in-flight ledger writes — a reload mid-write would drop unflushed entries
 
   async onload(): Promise<void> {
     await this.loadSettings();
-    this.store = new VaultStore(this.app, () => this.settings.baseFolder);
+    this.store = new VaultStore(this.app, () => this.settings.baseFolder, () => deviceId(this.app, this.deviceLabel()));
     this.addSettingTab(new MilleFeuilleSettingTab(this.app, this));
 
     this.registerView(MILLE_VIEW, (leaf) => new MilleFeuilleView(leaf, this));
@@ -205,6 +207,7 @@ export default class MilleFeuillePlugin extends Plugin {
    *  claims chips the ledger doesn't hold. Returns true if the write landed. */
   private async flush(sink: LedgerEntry[]): Promise<boolean> {
     if (sink.length === 0) return false;
+    this.writing++;
     try {
       await this.store.appendLedgerMany(sink);
       return true;
@@ -212,6 +215,8 @@ export default class MilleFeuillePlugin extends Plugin {
       this.entries = this.entries.filter((e) => !sink.includes(e));
       notify(`Ledger write failed, nothing recorded: ${err instanceof Error ? err.message : String(err)}`);
       return false;
+    } finally {
+      this.writing--;
     }
   }
 
@@ -233,19 +238,56 @@ export default class MilleFeuillePlugin extends Plugin {
   }
 
   // ---- scanning ----
+  /**
+   * §V85: a ledger file changing under us means our in-memory snapshot is stale. Under LiveSync
+   * this is the normal case, not an edge case — replication starts *after* the plugin loads, so
+   * `this.entries` is a pre-sync ledger unless something re-reads it. Scanning against a stale
+   * snapshot makes `isCredited` false for credits that are already banked, and every synced task
+   * file gets paid a second time. Debounced: a sync pulls the month files in a burst, and each
+   * reload re-reads the whole folder.
+   */
+  private reloadLedgerSoon = debounce(() => {
+    // A reload replaces `this.entries` from disk. Entries pushed but not yet written would vanish
+    // from memory, look uncredited to the next scan, and get paid twice — the bug this fixes.
+    if (this.writing > 0 || this.busy) { this.reloadLedgerSoon(); return; }
+    void this.reload().then(() => this.afterSync());
+  }, 1500, true);
+
+  private async afterSync(): Promise<void> {
+    await this.store.writeWalletCache(this.balance()); // §V85 wallet cache follows the merged ledger
+    this.refreshViews();
+  }
+
+  private ledgerFolder(): string {
+    return normalizePath(`${this.settings.baseFolder}/ledger`) + "/";
+  }
+
   private async onFileChanged(f: TAbstractFile): Promise<void> {
     if (!(f instanceof TFile) || f.extension !== "md") return;
+    // §V85 before the scope check: the ledger folder lives inside the base folder, which
+    // `inScanScope` excludes, so this would never be reached below.
+    if (f.path.startsWith(this.ledgerFolder())) { this.reloadLedgerSoon(); return; }
     if (!inScanScope(f.path, this.scope())) return; // §V30,§V65 scope + own-data + gaming guard
     const content = await this.app.vault.read(f);
     const sink: LedgerEntry[] = [];
-    for (const raw of content.split("\n")) this.reconcileLine(f.path, raw, sink);
+    // §V86: Obsidian fires `modify` identically for a keystroke and for a LiveSync replication
+    // write - there is no flag to tell them apart. You edit the file you are looking at; sync
+    // writes files you are not. Gates reversals only (see reconcileLine).
+    const userEdited = this.app.workspace.getActiveFile()?.path === f.path;
+    for (const raw of content.split("\n")) this.reconcileLine(f.path, raw, sink, false, userEdited);
     if (await this.flush(sink)) await this.afterCredit();
   }
 
   /** Parse one line, decide credit/reverse vs the ledger, apply. Returns true if it moved chips.
    *  New entries go into `sink` for the caller to write in one batch — see appendLedgerMany.
-   *  quiet (§V32 rescan): suppress per-line toasts + crit-streak so backfill stays silent. */
-  private reconcileLine(path: string, raw: string, sink: LedgerEntry[], quiet = false): boolean {
+   *  quiet (§V32 rescan): suppress per-line toasts + crit-streak so backfill stays silent.
+   *  allowReverse (§V86): credit and reverse have asymmetric blast radius. A wrong credit inflates
+   *  the wallet and is correctable; a wrong reversal destroys a real completion and the chips it
+   *  paid. So the destructive direction demands evidence of a human edit, while credits stay
+   *  ungated - ticking a box from a Tasks/Dataview query view writes a non-active source file and
+   *  must still pay. A missed reversal is recoverable by the rescan command (§V32), which passes
+   *  true because the user asked for it explicitly. */
+  private reconcileLine(path: string, raw: string, sink: LedgerEntry[], quiet = false, allowReverse = true): boolean {
     const p = parseLine(raw);
     if (!p) return false;
     const hk = habitKey(p.text, today());
@@ -283,6 +325,7 @@ export default class MilleFeuillePlugin extends Plugin {
     }
 
     // reverse
+    if (!allowReverse) return false; // §V86 destructive; needs a human edit behind it
     const frozen = creditedKey ? frozenChips(this.entries, creditedKey) : null;
     if (!frozen || !creditedKey) return false;
     const rev: LedgerEntry = { kind: "reversal", date: today(), reversalOf: creditedKey, chips: -frozen.chips };
@@ -454,6 +497,19 @@ export default class MilleFeuillePlugin extends Plugin {
   }
 
   // ---- settings ----
+  /**
+   * §V87 the device label lives in localStorage, NOT settings. `data.json` is replicated when
+   * LiveSync hidden-file sync is on, so a label kept there would sync and both devices would
+   * share one ledger lane again - the exact bug the split exists to prevent.
+   */
+  deviceLabel(): string {
+    const v = this.app.loadLocalStorage("mille-feuille:device-label");
+    return typeof v === "string" ? v : "";
+  }
+  setDeviceLabel(v: string): void {
+    this.app.saveLocalStorage("mille-feuille:device-label", v.trim() || null);
+  }
+
   async loadSettings(): Promise<void> {
     this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
   }
