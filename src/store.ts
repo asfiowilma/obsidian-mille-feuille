@@ -203,9 +203,13 @@ export class VaultStore {
   }
 
   // ---- wallet cache ----
-  // §V87 device-suffixed for the same reason as the ledger: one shared path = a sync conflict.
+  // §V87 deliberately NOT device-suffixed, unlike the ledger. The split exists because a lost
+  // ledger revision loses data (purchases); this file is a pure cache nothing reads back, so a
+  // lost revision costs nothing - the next credit or post-sync reload rewrites it. And once both
+  // devices sum the same ledger files (§V85) they write the same number, so there is nothing left
+  // to conflict over. A shared path here is not the bug it is for the ledger.
   async writeWalletCache(balance: number): Promise<void> {
-    await this.writeFile(this.path(`wallet.${this.device()}.md`), `---\nbalance: ${balance}\n---\n`);
+    await this.writeFile(this.path("wallet.md"), `---\nbalance: ${balance}\n---\n`);
   }
 }
 
