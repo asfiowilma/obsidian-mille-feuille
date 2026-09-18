@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { tableBlock, parseLedgerBlock, parseLedgerBlockStrict } from "../src/table.js";
+import { tableBlock, parseLedgerBlock, parseLedgerBlockStrict, unionLedger } from "../src/table.js";
 import { jsonBlock } from "../src/jsonblock.js";
 
 const rows = [
@@ -42,4 +42,23 @@ test("strict parse refuses to treat an unreadable file as empty (would wipe purc
 
 test("an empty but well-formed table is empty, not unreadable", () => {
   assert.deepEqual(parseLedgerBlockStrict(tableBlock("ledger 2026-08", []), "x.md"), []);
+});
+
+test("unionLedger order is independent of file order (V89)", () => {
+  const credit = (date: string, key: string) =>
+    ({ date, kind: "credit", key, source: "task", tier: null, base: 5, crit: null, chips: 5 });
+  const file = (path: string, rows: ReturnType<typeof credit>[]) =>
+    ({ path, content: tableBlock("ledger 2026-09", rows) });
+
+  const files = [
+    file("mf/ledger/2026-09.hydra.md", [credit("2026-09-01", "h"), credit("2026-09-03", "h3")]),
+    file("mf/ledger/2026-09.md", [credit("2026-09-01", "legacy")]),
+    file("mf/ledger/2026-09.strayfe.md", [credit("2026-09-01", "s"), credit("2026-09-02", "s2")]),
+  ];
+  const keys = (fs: typeof files) => unionLedger<{ date: string; key: string }>(fs).map((e) => e.key);
+
+  // same-date ties break on path, codepoint order ("...09.hydra.md" < "...09.md" at 'h' vs 'm')
+  assert.deepEqual(keys(files), ["h", "legacy", "s", "s2", "h3"]);
+  assert.deepEqual(keys([...files].reverse()), keys(files), "same set, any input order, same array");
+  assert.deepEqual(keys([files[1], files[0], files[2]]), keys(files));
 });

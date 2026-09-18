@@ -6,7 +6,7 @@ import { deriveState, slug } from "./rewards.js";
 import type { LedgerEntry, MonthlyAggregate } from "./ledger.js";
 import { groupByMonth } from "./ledger.js";
 import { jsonBlock, parseJsonBlock, parseJsonBlockStrict } from "./jsonblock.js";
-import { tableBlock, parseLedgerBlock, parseLedgerBlockStrict } from "./table.js";
+import { tableBlock, parseLedgerBlockStrict, unionLedger } from "./table.js";
 import {
   appendMatchRow, parseSessionNote, sessionNote, setFrontmatterField, insertTask,
   type Match, type Session,
@@ -111,14 +111,15 @@ export class VaultStore {
     });
   }
 
+  /** Union of every file in the ledger folder, in canonical `(date, path, row index)` order. §V89 */
   async readLedger(): Promise<LedgerEntry[]> {
     const folder = this.path("ledger");
-    const all: LedgerEntry[] = [];
+    const files: { path: string; content: string }[] = [];
     for (const f of this.app.vault.getMarkdownFiles()) {
       if (!f.path.startsWith(folder + "/")) continue;
-      all.push(...parseLedgerBlock<LedgerEntry>(await this.app.vault.read(f))); // §V88 table or legacy JSON
+      files.push({ path: f.path, content: await this.app.vault.read(f) }); // §V88 table or legacy JSON
     }
-    return all.sort((a, b) => a.date.localeCompare(b.date));
+    return unionLedger<LedgerEntry>(files);
   }
 
   // ---- aggregates ----

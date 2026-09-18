@@ -401,6 +401,8 @@ V86: reversal ! evidence of human edit. Obsidian fires `modify` same for keystro
 V87: 1 ledger write-lane per device. `ledger/<yyyy-mm>.<device>.md`. `wallet.md` ⊥ suffixed — pure cache, ⊥ read back; lost revision costs 0 (next credit|post-sync reload rewrites it) & post-V85 both devices sum same files ∴ write same number ∴ ⊥ conflict. Split justified only where lost revision loses data. 2 devices writing 1 path + whole-file read-modify-write → LiveSync doc conflict → keeps 1 revision entire → loser's spend|claim rows gone. Device id ∈ localStorage (`loadLocalStorage`/`saveLocalStorage`), ⊥ `data.json` — data.json replicates when LiveSync hidden-file sync on ∴ id there syncs & both pick same lane. Optional user label (filename-slugged) else random 6-char id, minted once. `Platform.isMobile` rejected: ≥2 desktop devices per vault → 2 buckets still share lane. Filename = write-lane, ⊥ identity: `readLedger` unions ∀ `.md` ∈ ledger folder ∴ regenerated id → extra file, ⊥ lost row. Legacy `<yyyy-mm>.md` still read.
 V88: ledger file = markdown table, 1 row/entry. Cols `date|kind|ref|source|tier|base|crit|chips|note`. `ref` = key (credit) | reversalOf (reversal) | reward (spend,claim). `note` = `k=v` extras (price, subtype, outcome, value). Empty cell = absent, ⊥ `""`|0 — spend `reward`,`chips`,`price` genuinely optional (V35,V40); credit `tier`,`crit` empty = null. Pipe ∈ key escaped `\|`. Reason: JSON array append rewrites ∀ line after last `}` ∴ ⊥ line-merge possible on conflict; table append = 1 added line + human-legible for hand resolution. Reader accepts legacy json block ∴ ⊥ migration step, ⊥ data rewrite. Strict variant throws on unreadable non-empty file (⊥ overwrite → would wipe purchases).
 
+V89: ledger read order canonical ∀ device = (date, file path, row index). `getMarkdownFiles()` order ⊥ guaranteed equal across devices & sort on `date` alone leaves same-date rows tied — `Array.sort` stable ∴ ties keep that arbitrary input order. Readers resolving a key by position (`frozenChips` = last credit row for key, `aggregate` walks in sequence) then pick different winners per device → different crit, different chips. Fix: sort files by path (codepoint, ⊥ `localeCompare` — collation locale-dependent = same disagreement back) before parse, stable date sort on top. `unionLedger` ∈ table.ts (pure, testable — store.ts ⊥ importable, obsidian pkg = types only). Legacy unsuffixed `<yyyy-mm>.md` sorts deterministically vs device-suffixed siblings. Prerequisite: read-time dedupe convergent only if ∀ device agrees which duplicate wins.
+
 ## §T
 
 id|status|task|cites
@@ -459,6 +461,7 @@ T52|x|reload ledger (debounced) on modify under ledger folder, skip while write 
 T53|x|gate reverse branch on active-file edit; credit ungated; rescan passes gate open|V86,V14,V32
 T54|x|device-local id in localStorage + settings label; device-suffix ledger path|V87,I.file,I.config
 T55|x|markdown-table ledger format, legacy json still read|V88,I.file
+T56|x|canonical ledger union order: files by path (codepoint) then stable date sort|V89,V87,V88
 
 ## §B
 
