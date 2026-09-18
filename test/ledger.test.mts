@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   balance, isCredited, frozenChips, aggregate, missingClosedMonths, habitCreditKey, migrateHabitKeys, groupByMonth,
+  dedupeCredits,
   type LedgerEntry, type CreditEntry, type ReversalEntry,
 } from "../src/ledger.js";
 
@@ -151,4 +152,61 @@ test("gaming chips are separate in the aggregate (V16,V66 / AC 20)", () => {
   assert.equal(a.chipsBySource.task, 40); // gaming never folded into the task total
   assert.equal(a.chipsByTier.base, 40); // §V66 gaming stays out of chipsByTier entirely
   assert.equal(a.critCount, 1); // §V78 a gaming crit still counts
+});
+
+test("dedupeCredits: one credit per key, first wins, balance counts it once (V90)", () => {
+  const strayfe = credit("task:Daily/2026-09-01.md:skincare-am·✅2026-09-01", 2);
+  const hydra = credit("task:Daily/2026-09-01.md:skincare-am·✅2026-09-01", 2, { date: "2026-09-08" });
+  const other = credit("kanji·farm·2026-09-15", 4);
+  const out = dedupeCredits([strayfe, hydra, other]);
+
+  assert.deepEqual(out, [strayfe, other], "second row for the key drops, first survives");
+  assert.equal(balance(out), 6);
+  assert.equal(balance([strayfe, hydra, other]), 8, "sanity: the dupe really did over-credit");
+});
+
+test("dedupeCredits: the surviving row is the winner frozenChips reports (V90)", () => {
+  const key = "kanji·farm·2026-09-15";
+  const first = credit(key, 4, { crit: 2, base: 2 });
+  const dupe = credit(key, 3, { crit: 1.5, base: 2, date: "2026-09-17" });
+  const out = dedupeCredits([first, dupe]);
+
+  // pre-dedupe frozenChips took the LAST row, so the devices disagreed on crit
+  assert.equal(frozenChips([first, dupe], key)?.crit, 1.5);
+  assert.equal(frozenChips(out, key)?.crit, 2, "both devices now read the same crit");
+  assert.equal(frozenChips(out, key)?.chips, 4);
+});
+
+test("dedupeCredits: a deduped key that was reversed still reads uncredited (V90)", () => {
+  const key = "kanji·farm·2026-09-15";
+  const rev: ReversalEntry = { kind: "reversal", date: "2026-09-16", reversalOf: key, chips: -4 };
+  const out = dedupeCredits([credit(key, 4), credit(key, 4, { date: "2026-09-17" }), rev]);
+
+  assert.equal(isCredited(out, key), false);
+  assert.equal(balance(out), 0, "one credit collapsed, one reversal cancels it");
+});
+
+test("dedupeCredits leaves spend / claim / gacha rows alone (V90)", () => {
+  const buy: LedgerEntry = { kind: "spend", date: "2026-09-11", reward: "Adhoc game time", price: 5, chips: -5 };
+  const claim: LedgerEntry = { kind: "claim", date: "2026-09-11", reward: "Adhoc game time" };
+  const roll: LedgerEntry = { kind: "spend", date: "2026-09-11", chips: -3, subtype: "gacha", outcome: "nothing" };
+  const rows = [buy, buy, buy, claim, claim, roll, roll];
+
+  assert.deepEqual(dedupeCredits(rows), rows, "repeatable events have no key and all count");
+  assert.equal(balance(dedupeCredits(rows)), -21);
+});
+
+test("dedupeCredits: aggregate counts a duplicated key once, critCount included (V90)", () => {
+  const key = "kanji·farm·2026-09-15";
+  const rows = [
+    credit(key, 4, { date: "2026-09-15", tier: "farm", source: "habit", crit: 2, base: 2 }),
+    credit(key, 3, { date: "2026-09-17", tier: "farm", source: "habit", crit: 1.5, base: 2 }),
+  ];
+  const dirty = aggregate(rows, "2026-09");
+  const clean = aggregate(dedupeCredits(rows), "2026-09");
+
+  assert.equal(dirty.critCount, 2);
+  assert.equal(clean.critCount, 1);
+  assert.equal(clean.chipsByTier.farm, 4);
+  assert.equal(clean.chipsBySource.habit, 4);
 });

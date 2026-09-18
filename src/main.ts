@@ -11,6 +11,7 @@ import {
   frozenChips,
   habitCreditKey,
   migrateHabitKeys,
+  dedupeCredits,
   aggregate,
   missingClosedMonths,
   type LedgerEntry,
@@ -198,7 +199,9 @@ export default class MilleFeuillePlugin extends Plugin {
   }
 
   async reload(): Promise<void> {
-    this.entries = migrateHabitKeys(await this.store.readLedger());
+    // §V90 dedupe AFTER the key migration: migrating a legacy untiered key can itself produce a
+    // collision with an already-tiered row, and that duplicate must collapse too.
+    this.entries = dedupeCredits(migrateHabitKeys(await this.store.readLedger()));
     this.rewards = await this.store.readRewards();
     this.refreshViews();
   }

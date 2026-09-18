@@ -98,6 +98,31 @@ export function migrateHabitKeys(entries: LedgerEntry[]): LedgerEntry[] {
   });
 }
 
+/**
+ * Collapse duplicate credit rows to one per key. A credit key is unique by construction - task
+ * path + `✅date`, or `id·tier·doneDate` - and V32 keeps a reversed key reversed rather than
+ * re-crediting it, so a second credit row for a key is always replication noise, whichever device
+ * wrote it. Under LiveSync the two files race: hydra can receive the task file before strayfe's
+ * ledger file, so `isCredited` is legitimately false at write time and no write-side guard closes
+ * the window. First row in canonical order wins, which is the same row on every device (V89).
+ *
+ * `spend`, `claim` and gacha rows are NOT deduped: repeatable events with no key - five identical
+ * purchases in a day are five real purchases. Reversals match `reversalOf` against the key, not a
+ * row, so collapsing duplicates leaves `isCredited` correct. §V90
+ */
+export function dedupeCredits(entries: LedgerEntry[]): LedgerEntry[] {
+  const seen = new Set<string>();
+  const out: LedgerEntry[] = [];
+  for (const e of entries) {
+    if (e.kind === "credit") {
+      if (seen.has(e.key)) continue;
+      seen.add(e.key);
+    }
+    out.push(e);
+  }
+  return out;
+}
+
 /** Split a batch of entries into one bucket per ledger month file, insertion order kept. §V20 */
 export function groupByMonth(entries: LedgerEntry[]): Map<string, LedgerEntry[]> {
   const byMonth = new Map<string, LedgerEntry[]>();

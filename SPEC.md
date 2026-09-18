@@ -403,6 +403,8 @@ V88: ledger file = markdown table, 1 row/entry. Cols `date|kind|ref|source|tier|
 
 V89: ledger read order canonical ∀ device = (date, file path, row index). `getMarkdownFiles()` order ⊥ guaranteed equal across devices & sort on `date` alone leaves same-date rows tied — `Array.sort` stable ∴ ties keep that arbitrary input order. Readers resolving a key by position (`frozenChips` = last credit row for key, `aggregate` walks in sequence) then pick different winners per device → different crit, different chips. Fix: sort files by path (codepoint, ⊥ `localeCompare` — collation locale-dependent = same disagreement back) before parse, stable date sort on top. `unionLedger` ∈ table.ts (pure, testable — store.ts ⊥ importable, obsidian pkg = types only). Legacy unsuffixed `<yyyy-mm>.md` sorts deterministically vs device-suffixed siblings. Prerequisite: read-time dedupe convergent only if ∀ device agrees which duplicate wins.
 
+V90: credit portion of ledger = set keyed by `key`, resolved at read time. 1 completed task credited 2x (58 keys, ~128 chips over-credited, crit rolls diverge ∴ devices disagree on total). V85 closes staleness WITHIN session, ⊥ orders 2 independent files vs each other: LiveSync hands hydra the task file before strayfe's ledger file ∴ `isCredited` legitimately false at write time. Which lands first ⊥ observable ∴ ⊥ write-side guard closes window; scan-time dedupe asks same stale question. Key unique by construction (task path + ✅date | `id·tier·doneDate`) & V32 keeps reversed key reversed ∴ 2nd credit row for a key = always noise. `dedupeCredits` drops any credit whose key already seen; 1st row in V89 canonical order wins ∴ same survivor ∀ device. Applied AFTER `migrateHabitKeys` — migrating a legacy untiered key can itself collide with an already-tiered row. spend|claim|gacha ⊥ deduped: repeatable events, no key (5 identical purchases = 5 real purchases). Reversal matches `reversalOf` vs key ⊥ row ∴ unaffected. ⊥ repair pass: `wallet.md` = write-only cache (no `readWallet` ∈ src), balance always recomputed from `entries` ∴ dedupe propagates on next load. Rejected: balance = Σ closed-month aggregates + current ledger — promotes conflict-prone `aggregates.md` to balance input, 2nd definition that can disagree, buys 0 (⊥ trim exists). Ceiling: dupe rows stay on disk, bounded, ⊥ correctness cost.
+
 ## §T
 
 id|status|task|cites
@@ -462,6 +464,7 @@ T53|x|gate reverse branch on active-file edit; credit ungated; rescan passes gat
 T54|x|device-local id in localStorage + settings label; device-suffix ledger path|V87,I.file,I.config
 T55|x|markdown-table ledger format, legacy json still read|V88,I.file
 T56|x|canonical ledger union order: files by path (codepoint) then stable date sort|V89,V87,V88
+T57|x|dedupe credit rows by key on load, after habit-key migration|V90,V89,V32,V13
 
 ## §B
 
@@ -469,3 +472,4 @@ id|date|cause|fix
 B1|2026-08-10|V53 `EMOJI_RE` missed keycap seq (`1️⃣`) — U+20E3 mark ∉ `Extended_Pictographic`, so own AC20 example failed|add `|\u{20E3}` alt to EMOJI_RE (V53)
 B2|2026-08-19|`gaming.taskFile` ∈ `gaming.folder` (user layout `Collections/Gaming/Sessions.md`) → V65 folder exclusion swallowed task file → tick ⊥ credit, ⊥ toast. V65 forced folder out, nothing forced taskFile in|V84
 B3|2026-08-29|LiveSync desktop↔mobile: wallet flooded w/ chips, spent chips reversed, reward purchases erased from history, wallet ≠ ledger. 2 defects compound — (1) `entries` read once at load, never after; replication lands later ∴ ∀ idempotency check runs vs pre-sync ledger → re-credit + spurious reverse. (2) both devices whole-file rewrite same `ledger/<yyyy-mm>.md` from that stale base → LiveSync conflict keeps 1 revision entire → other device's spend|claim rows gone|V85,V86,V87,V88
+B4|2026-09-18|same completed task credited once per device — 58 duplicate credit keys, ~128 chips over-credited, crit rolls diverge ∴ devices disagree on balance. V85 fixed staleness within a session but ⊥ ordering between files: replicated task file can arrive before the other device's ledger file ∴ `isCredited` false at write time, credit correct given what device knows. Race ⊥ closable write-side|V89,V90
