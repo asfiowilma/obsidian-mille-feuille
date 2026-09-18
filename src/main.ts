@@ -485,9 +485,27 @@ export default class MilleFeuillePlugin extends Plugin {
 
   /** §V33: on load, roll any closed month that has credits but no aggregate yet. Silent. */
   private async autoRollMonths(): Promise<void> {
+    const month = today().slice(0, 7);
     const have = (await this.store.readAggregates()).map((a) => a.month);
-    for (const m of missingClosedMonths(this.entries, have, today().slice(0, 7))) {
+    for (const m of missingClosedMonths(this.entries, have, month)) {
       await this.store.writeAggregate(aggregate(this.entries, m));
+    }
+    await this.rerollStaleMonths(month);
+  }
+
+  /**
+   * §V91: a month rolled before §V90 baked the cross-device duplicates into its stored row -
+   * inflated `chipsBySource`, inflated `critCount` - and `missingClosedMonths` skips any month
+   * that already has a row, so it would never be revisited. An aggregate is a pure function of
+   * the ledger and no path ever deletes closed-month rows, so recomputing is always safe.
+   * Compared against this device's OWN rows, not the union: a device settles its own file in one
+   * pass instead of rewriting on every load because the other device's copy is still stale.
+   */
+  private async rerollStaleMonths(currentMonth: string): Promise<void> {
+    for (const stored of await this.store.readOwnAggregates()) {
+      if (stored.month >= currentMonth) continue; // open month is still moving
+      const fresh = aggregate(this.entries, stored.month);
+      if (JSON.stringify(fresh) !== JSON.stringify(stored)) await this.store.writeAggregate(fresh);
     }
   }
 

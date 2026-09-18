@@ -4,9 +4,9 @@ import { App, TFile, normalizePath, parseYaml, stringifyYaml } from "obsidian";
 import type { Reward } from "./rewards.js";
 import { deriveState, slug } from "./rewards.js";
 import type { LedgerEntry, MonthlyAggregate } from "./ledger.js";
-import { groupByMonth } from "./ledger.js";
+import { groupByMonth, collapseByMonth } from "./ledger.js";
 import { jsonBlock, parseJsonBlock, parseJsonBlockStrict } from "./jsonblock.js";
-import { tableBlock, parseLedgerBlockStrict, unionLedger } from "./table.js";
+import { tableBlock, parseLedgerBlockStrict, unionLedger, byPath } from "./table.js";
 import {
   appendMatchRow, parseSessionNote, sessionNote, setFrontmatterField, insertTask,
   type Match, type Session,
@@ -123,12 +123,39 @@ export class VaultStore {
   }
 
   // ---- aggregates ----
+  /**
+   * §V91 one write-lane per device, same shape as the ledger's (§V87). `aggregates.md` was the
+   * last unsplit write path in the base folder: a whole-file read-modify-write of a JSON block,
+   * which §V88 established cannot line-merge, so a LiveSync conflict kept one revision entire and
+   * the other device's rows were gone. Reads union every `aggregates*.md`, legacy file included.
+   */
   private aggPath(): string {
-    return this.path("aggregates.md");
+    return this.path(`aggregates.${this.device()}.md`);
   }
+
+  private aggFiles(): TFile[] {
+    const base = this.path() + "/";
+    return this.app.vault
+      .getMarkdownFiles()
+      .filter((f) => f.path.startsWith(base + "aggregates") && !f.path.slice(base.length).includes("/"))
+      .sort(byPath);
+  }
+
+  /** Union of every device's aggregate file, one row per month - first in path order wins. §V91 */
   async readAggregates(): Promise<MonthlyAggregate[]> {
+    const rows: MonthlyAggregate[] = [];
+    for (const f of this.aggFiles()) {
+      rows.push(...parseJsonBlock<MonthlyAggregate>(await this.app.vault.read(f)));
+    }
+    return collapseByMonth(rows);
+  }
+
+  /** Only this device's own rows. Staleness checks compare against these, never the union: a
+   *  device must settle its own file in one pass, not chase the other device's copy. §V91 */
+  async readOwnAggregates(): Promise<MonthlyAggregate[]> {
     return parseJsonBlock<MonthlyAggregate>(await this.readFile(this.aggPath()));
   }
+
   async writeAggregate(a: MonthlyAggregate): Promise<void> {
     await this.serialize(async () => {
       const path = this.aggPath();

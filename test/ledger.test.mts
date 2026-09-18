@@ -2,7 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   balance, isCredited, frozenChips, aggregate, missingClosedMonths, habitCreditKey, migrateHabitKeys, groupByMonth,
-  dedupeCredits,
+  dedupeCredits, collapseByMonth,
+  type MonthlyAggregate,
   type LedgerEntry, type CreditEntry, type ReversalEntry,
 } from "../src/ledger.js";
 
@@ -209,4 +210,16 @@ test("dedupeCredits: aggregate counts a duplicated key once, critCount included 
   assert.equal(clean.critCount, 1);
   assert.equal(clean.chipsByTier.farm, 4);
   assert.equal(clean.chipsBySource.habit, 4);
+});
+
+test("collapseByMonth: one row per month, first wins, sorted by month (V91)", () => {
+  const agg = (month: string, critCount: number): MonthlyAggregate => ({
+    month, chipsByTier: {}, chipsBySource: {}, critCount,
+    purchased: 0, claimed: 0, reversals: 0, gachaRolls: 0, gachaRebated: 0, gachaClaims: 0,
+  });
+  // union order = file path order: legacy aggregates.md, then hydra's, then strayfe's
+  const out = collapseByMonth([agg("2026-08", 3), agg("2026-09", 7), agg("2026-08", 9), agg("2026-07", 1)]);
+
+  assert.deepEqual(out.map((a) => a.month), ["2026-07", "2026-08", "2026-09"]);
+  assert.equal(out[1].critCount, 3, "the second row for 2026-08 loses to the first");
 });

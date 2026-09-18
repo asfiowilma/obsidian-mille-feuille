@@ -147,6 +147,13 @@ export function parseLedgerBlockStrict<T>(content: string | null, path: string):
 }
 
 /**
+ * Codepoint order, not `localeCompare`: collation is locale-dependent, which would reintroduce
+ * the very cross-device disagreement a canonical sort exists to remove. §V89
+ */
+export const byPath = (a: { path: string }, b: { path: string }): number =>
+  a.path < b.path ? -1 : a.path > b.path ? 1 : 0;
+
+/**
  * Union every ledger file into one canonically ordered array: `(date, file path, row index)`.
  * `getMarkdownFiles()` order is not guaranteed to match between devices, and sorting on `date`
  * alone leaves same-date rows tied — stable sort then keeps that arbitrary order, so two devices
@@ -157,9 +164,7 @@ export function unionLedger<T extends { date: string }>(
   files: { path: string; content: string }[],
 ): T[] {
   const out: T[] = [];
-  // Codepoint order, not `localeCompare`: collation is locale-dependent, which would reintroduce
-  // the very cross-device disagreement this sort exists to remove.
-  for (const f of [...files].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))) {
+  for (const f of [...files].sort(byPath)) {
     out.push(...parseLedgerBlock<T>(f.content));
   }
   return out.sort((a, b) => a.date.localeCompare(b.date)); // stable: ties keep (path, row index)

@@ -148,6 +148,22 @@ export interface MonthlyAggregate {
   gachaClaims: number; // §V41 free rewards won (grant markers) — separate from paid `claimed`
 }
 
+/**
+ * Collapse a device-unioned aggregate list to one row per month, first in path order winning, and
+ * sort by month. Post-V90 both devices derive the same row from the same deduped ledger, so the
+ * winner only matters for rows rolled before that. §V91
+ */
+export function collapseByMonth(rows: MonthlyAggregate[]): MonthlyAggregate[] {
+  const seen = new Set<string>();
+  const out: MonthlyAggregate[] = [];
+  for (const a of rows) {
+    if (seen.has(a.month)) continue;
+    seen.add(a.month);
+    out.push(a);
+  }
+  return out.sort((x, y) => x.month.localeCompare(y.month));
+}
+
 /** Closed months (< current) holding ≥1 credit but no aggregate yet, oldest-first. §V33 */
 export function missingClosedMonths(entries: LedgerEntry[], haveMonths: string[], currentMonth: string): string[] {
   const have = new Set(haveMonths);
