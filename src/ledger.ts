@@ -123,6 +123,41 @@ export function dedupeCredits(entries: LedgerEntry[]): LedgerEntry[] {
   return out;
 }
 
+/** Months whose ledger files actually hold a duplicate credit row - the only ones worth a prune pass. §V93 */
+export function duplicateCreditMonths(entries: LedgerEntry[]): string[] {
+  const seen = new Set<string>();
+  const months = new Set<string>();
+  for (const e of entries) {
+    if (e.kind !== "credit") continue;
+    if (seen.has(e.key)) months.add(e.date.slice(0, 7));
+    else seen.add(e.key);
+  }
+  return [...months].sort();
+}
+
+/**
+ * Per-file view of the same rule: walk the files in canonical order and keep, in each, only the
+ * credit rows that win their key. Feeding the result back to disk turns the read-time dedupe into
+ * an on-disk prune - each device rewrites only the losers in its OWN lane (§V87), so a device
+ * never writes another device's file and the duplicates clear once both have run. §V93
+ */
+export function dedupeCreditsByFile<T extends { path: string; rows: LedgerEntry[] }>(
+  files: T[],
+): { path: string; rows: LedgerEntry[] }[] {
+  const seen = new Set<string>();
+  return files.map((f) => {
+    const rows: LedgerEntry[] = [];
+    for (const e of f.rows) {
+      if (e.kind === "credit") {
+        if (seen.has(e.key)) continue;
+        seen.add(e.key);
+      }
+      rows.push(e);
+    }
+    return { path: f.path, rows };
+  });
+}
+
 /** Split a batch of entries into one bucket per ledger month file, insertion order kept. §V20 */
 export function groupByMonth(entries: LedgerEntry[]): Map<string, LedgerEntry[]> {
   const byMonth = new Map<string, LedgerEntry[]>();

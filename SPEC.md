@@ -408,6 +408,9 @@ V90: credit portion of ledger = set keyed by `key`, resolved at read time. 1 com
 V91: 1 aggregates write-lane per device — `aggregates.<device>.md`, same split as V87's ledger. `aggregates.md` was last unsplit write path ∈ base folder: whole-file read-modify-write of a json block, ⊥ line-mergeable (V88) ∴ LiveSync doc conflict keeps 1 revision entire, loser's rows gone. `readAggregates` unions ∀ `aggregates*.md` ∈ base folder root (legacy unsuffixed included), path-sorted (V89), collapsed to 1 row/month, 1st wins — post-V90 ∀ device derives same row from same deduped ledger ∴ winner only matters for pre-V90 rows. Severity low by construction: aggregates ⊥ input to balance (V6 balance = Σ ledger) & only consumer of `readAggregates` reads `.month` — the view computes live stats from `entries` ∴ a lost|stale row costs display of an archival record, ⊥ correctness. Recovery already existed: V33 re-rolls any closed month w/ credits & ⊥ aggregate row, & ⊥ trim ∈ src ∴ ledger source always present.
 V92: stale aggregate re-rolled on load. Month rolled BEFORE V90 baked duplicates into its stored row (inflated `chipsBySource`, `critCount`) & V33 `missingClosedMonths` skips any month already present ∴ ⊥ revisit ever. Aggregate = pure fn of ledger & ⊥ path deletes closed-month rows ∴ recompute always safe. ∀ closed month ∈ THIS DEVICE's own rows: recompute, write if ≠ stored. Own rows ⊥ union — comparing vs union makes a device rewrite every load while the other device's copy stays stale; own-file compare settles in 1 pass per device. Open month skipped (still moving). Preferred over a force-re-roll command: ⊥ prompt UI ∈ plugin & correction ⊥ needs user to know it's needed.
 
+V93: duplicate credit rows pruned from disk on load, closed months only, own lane only. V90 makes them stop counting, ⊥ removes them (58 rows ∈ 2026-09 alone). 2 hard constraints: (a) closed month only — an open month still takes appends, & rewriting from a base a queued append already moved is V13's double-pay bug; a closed month is quiet ∴ safe. (b) own `<month>.<device>.md` only — pruning another device's file puts 2 writers back on 1 path = exactly the conflict V87 split to escape. ∴ each device drops only ITS losers; month fully pruned once both ran. Legacy unsuffixed file ⊥ owner ∴ never rewritten. Winner rule = V90's, applied per file in V89 canonical order ∴ prune result ≡ read-time dedupe result. Strict parse: unreadable file aborts prune ⊥ reads empty (would wipe purchase history). Scoped by `duplicateCreditMonths` measured at load BEFORE the collapse ∴ clean vault reads 0 extra files. Idempotent: 2nd run drops 0, writes 0.
+V94: `recompute-wallet` command = `reload()` + `writeWalletCache(balance())`. wallet.md = write-only display cache (V87, ⊥ `readWallet` ∈ src) ∴ can look wrong (LiveSync kept other device's revision), never BE wrong. Rescan (V32) & plugin reload already recompute it; this is the door that ⊥ walks the vault.
+
 ## §T
 
 id|status|task|cites
@@ -470,6 +473,8 @@ T56|x|canonical ledger union order: files by path (codepoint) then stable date s
 T57|x|dedupe credit rows by key on load, after habit-key migration|V90,V89,V32,V13
 T58|x|device-suffix aggregates path, union + collapse by month on read|V91,V87,V89,I.file
 T59|x|re-roll own stale closed-month aggregates on load|V92,V90,V33,V16
+T60|x|prune duplicate credit rows from own closed-month ledger files on load|V93,V90,V89,V87,V13
+T61|x|`recompute-wallet` command|V94,V32,V87
 
 ## §B
 

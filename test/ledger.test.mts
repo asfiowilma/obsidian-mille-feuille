@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   balance, isCredited, frozenChips, aggregate, missingClosedMonths, habitCreditKey, migrateHabitKeys, groupByMonth,
-  dedupeCredits, collapseByMonth,
+  dedupeCredits, collapseByMonth, dedupeCreditsByFile, duplicateCreditMonths,
   type MonthlyAggregate,
   type LedgerEntry, type CreditEntry, type ReversalEntry,
 } from "../src/ledger.js";
@@ -222,4 +222,40 @@ test("collapseByMonth: one row per month, first wins, sorted by month (V91)", ()
 
   assert.deepEqual(out.map((a) => a.month), ["2026-07", "2026-08", "2026-09"]);
   assert.equal(out[1].critCount, 3, "the second row for 2026-08 loses to the first");
+});
+
+test("dedupeCreditsByFile: each file keeps only the credits it wins (V93)", () => {
+  const key = "kanji·farm·2026-09-15";
+  const buy: LedgerEntry = { kind: "spend", date: "2026-09-11", reward: "game time", price: 5, chips: -5 };
+  const files = [
+    { path: "mf/ledger/2026-09.hydra.md", rows: [credit(key, 4), buy] },
+    { path: "mf/ledger/2026-09.strayfe.md", rows: [credit(key, 3), credit("other", 2), buy] },
+  ];
+  const out = dedupeCreditsByFile(files);
+
+  assert.deepEqual(out[0].rows, files[0].rows, "the winning lane is untouched");
+  assert.deepEqual(out[1].rows.map((e) => e.kind), ["credit", "spend"], "loser drops, spend stays");
+  assert.equal(balance(out.flatMap((f) => f.rows)), balance(dedupeCredits(files.flatMap((f) => f.rows))),
+    "pruning to disk gives the same balance the read-time dedupe already gives");
+});
+
+test("dedupeCreditsByFile: re-running on pruned files is a no-op (V93)", () => {
+  const files = [
+    { path: "a.md", rows: [credit("k", 4)] },
+    { path: "b.md", rows: [credit("k", 4), credit("k2", 1)] },
+  ];
+  const once = dedupeCreditsByFile(files);
+  const twice = dedupeCreditsByFile(once);
+  assert.deepEqual(twice, once);
+});
+
+test("duplicateCreditMonths lists only months that really hold a dupe (V93)", () => {
+  const rows = [
+    credit("a", 2, { date: "2026-08-01" }),
+    credit("b", 2, { date: "2026-09-01" }),
+    credit("b", 2, { date: "2026-09-08" }), // the dupe, credited on the other device a week later
+    credit("c", 2, { date: "2026-09-20" }),
+  ];
+  assert.deepEqual(duplicateCreditMonths(rows), ["2026-09"]);
+  assert.deepEqual(duplicateCreditMonths(dedupeCredits(rows)), [], "nothing left to prune after a prune");
 });

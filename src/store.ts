@@ -4,7 +4,7 @@ import { App, TFile, normalizePath, parseYaml, stringifyYaml } from "obsidian";
 import type { Reward } from "./rewards.js";
 import { deriveState, slug } from "./rewards.js";
 import type { LedgerEntry, MonthlyAggregate } from "./ledger.js";
-import { groupByMonth, collapseByMonth } from "./ledger.js";
+import { groupByMonth, collapseByMonth, dedupeCreditsByFile } from "./ledger.js";
 import { jsonBlock, parseJsonBlock, parseJsonBlockStrict } from "./jsonblock.js";
 import { tableBlock, parseLedgerBlockStrict, unionLedger, byPath } from "./table.js";
 import {
@@ -120,6 +120,41 @@ export class VaultStore {
       files.push({ path: f.path, content: await this.app.vault.read(f) }); // §V88 table or legacy JSON
     }
     return unionLedger<LedgerEntry>(files);
+  }
+
+  /**
+   * Drop duplicate credit rows from a CLOSED month's ledger files, using §V90's winner rule.
+   *
+   * Two hard constraints, both about not undoing earlier fixes. Only a closed month is touched:
+   * a month still taking appends could be rewritten from a base that a queued append has already
+   * moved (§V13), and only a closed month is quiet enough that it cannot. And only this device's
+   * own lane is rewritten - pruning another device's file would put two writers back on one path,
+   * which is the conflict §V87 split the ledger to escape. Each device clears its own losers, so
+   * a month is fully pruned once both have run. The legacy unsuffixed file has no owner and is
+   * never rewritten. §V93
+   */
+  async pruneMonth(month: string, currentMonth: string): Promise<number> {
+    if (month >= currentMonth) return 0; // open month still takes appends
+    return this.serialize(async () => {
+      const folder = this.path("ledger");
+      const mine = this.ledgerPath(month);
+      const files: { path: string; rows: LedgerEntry[] }[] = [];
+      for (const f of this.app.vault.getMarkdownFiles().sort(byPath)) {
+        if (!f.path.startsWith(`${folder}/${month}.`)) continue;
+        // Strict: an unreadable month file must abort the prune, not read as empty and then get
+        // rewritten as empty - that would destroy real purchase history.
+        const content = await this.app.vault.read(f);
+        files.push({ path: f.path, rows: parseLedgerBlockStrict<LedgerEntry>(content, f.path) });
+      }
+      let dropped = 0;
+      for (const kept of dedupeCreditsByFile(files)) {
+        const before = files.find((f) => f.path === kept.path)!.rows.length;
+        if (kept.path !== mine || kept.rows.length === before) continue; // own lane, and only if it shrank
+        dropped += before - kept.rows.length;
+        await this.writeFile(kept.path, tableBlock(`ledger ${month}`, kept.rows));
+      }
+      return dropped;
+    });
   }
 
   // ---- aggregates ----

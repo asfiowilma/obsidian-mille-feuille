@@ -12,6 +12,7 @@ import {
   habitCreditKey,
   migrateHabitKeys,
   dedupeCredits,
+  duplicateCreditMonths,
   aggregate,
   missingClosedMonths,
   type LedgerEntry,
@@ -40,6 +41,8 @@ export default class MilleFeuillePlugin extends Plugin {
   declare settings: MilleFeuilleSettings;
   store!: VaultStore;
   entries: LedgerEntry[] = [];
+  /** Months holding a duplicate credit row, measured at load before the dedupe. §V93 */
+  private dupMonths: string[] = [];
   rewards: Reward[] = [];
   sessions: { session: Session; unreadable: number }[] = []; // §V79 newest-first, all ages
   batchCounts: Record<string, number> = {}; // §V63 batches already written, per session id
@@ -59,6 +62,7 @@ export default class MilleFeuillePlugin extends Plugin {
     this.addCommand({ id: "open-mille-feuille", name: "Open panel", callback: () => this.activateView() });
     this.addCommand({ id: "roll-monthly", name: "Roll monthly review", callback: () => this.rollMonthly() });
     this.addCommand({ id: "rescan-vault", name: "Rescan vault for completed tasks", callback: () => this.rescanAll() });
+    this.addCommand({ id: "recompute-wallet", name: "Recompute wallet from ledger", callback: () => this.recomputeWallet() });
     // §V58: registered always, but each one does nothing while the subsystem is off.
     this.addCommand({ id: "gaming-log-match", name: "Log a match", callback: () => this.openMatchScreen() });
     this.addCommand({ id: "gaming-process", name: "Process gaming session", callback: () => this.processAllSessions() });
@@ -201,7 +205,9 @@ export default class MilleFeuillePlugin extends Plugin {
   async reload(): Promise<void> {
     // §V90 dedupe AFTER the key migration: migrating a legacy untiered key can itself produce a
     // collision with an already-tiered row, and that duplicate must collapse too.
-    this.entries = dedupeCredits(migrateHabitKeys(await this.store.readLedger()));
+    const raw = migrateHabitKeys(await this.store.readLedger());
+    this.dupMonths = duplicateCreditMonths(raw); // §V93 measured before the collapse hides them
+    this.entries = dedupeCredits(raw);
     this.rewards = await this.store.readRewards();
     this.refreshViews();
   }
@@ -491,6 +497,9 @@ export default class MilleFeuillePlugin extends Plugin {
       await this.store.writeAggregate(aggregate(this.entries, m));
     }
     await this.rerollStaleMonths(month);
+    // §V93 prune only the months that actually hold a duplicate, so a clean vault reads nothing
+    // extra on load. `dupMonths` is measured in `reload()`, before the dedupe collapses them.
+    for (const m of this.dupMonths) await this.store.pruneMonth(m, month);
   }
 
   /**
@@ -507,6 +516,18 @@ export default class MilleFeuillePlugin extends Plugin {
       const fresh = aggregate(this.entries, stored.month);
       if (JSON.stringify(fresh) !== JSON.stringify(stored)) await this.store.writeAggregate(fresh);
     }
+  }
+
+  /**
+   * Re-read the ledger and rewrite `wallet.md` from it. The wallet is a write-only display cache
+   * (§V87, nothing in `src/` reads it back), so it can only ever look wrong, never *be* wrong -
+   * most likely after a LiveSync conflict kept the other device's revision. A rescan (§V32) and a
+   * plugin reload both already fix it; this is the one that does not walk the vault to do it.
+   */
+  async recomputeWallet(): Promise<void> {
+    await this.reload();
+    await this.store.writeWalletCache(this.balance());
+    notify(`Wallet recomputed from ledger: ${this.balance()}🪙`);
   }
 
   async rollMonthly(): Promise<void> {
